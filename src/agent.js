@@ -5,7 +5,6 @@ const calendar = require('./tools/calendar');
 
 const client = new Anthropic({ apiKey: config.anthropic.apiKey });
 
-// Definición de herramientas para el agente paciente
 const PATIENT_TOOLS = [
   {
     name: 'verificar_disponibilidad',
@@ -13,14 +12,8 @@ const PATIENT_TOOLS = [
     input_schema: {
       type: 'object',
       properties: {
-        fecha: {
-          type: 'string',
-          description: 'Fecha preferida en formato ISO (YYYY-MM-DD). Si no especifica, busca en los próximos días.',
-        },
-        duracion_minutos: {
-          type: 'number',
-          description: 'Duración de la cita en minutos. Default 60.',
-        },
+        fecha: { type: 'string', description: 'Fecha preferida en formato ISO (YYYY-MM-DD). Si no especifica, busca en los próximos días.' },
+        duracion_minutos: { type: 'number', description: 'Duración de la cita en minutos. Default 60.' },
       },
       required: [],
     },
@@ -77,7 +70,6 @@ const PATIENT_TOOLS = [
   },
 ];
 
-// Herramientas para el agente del odontólogo
 const DENTIST_TOOLS = [
   {
     name: 'agenda_del_dia',
@@ -115,32 +107,29 @@ const DENTIST_TOOLS = [
   },
 ];
 
-// Ejecuta la herramienta solicitada por Claude
-async function executeTool(toolName, toolInput) {
+async function executeTool(toolName, toolInput, calendarId) {
   console.log(`Ejecutando herramienta: ${toolName}`, toolInput);
   switch (toolName) {
     case 'verificar_disponibilidad':
-      return await calendar.verificarDisponibilidad(toolInput);
+      return await calendar.verificarDisponibilidad(toolInput, calendarId);
     case 'crear_cita':
-      return await calendar.crearCita(toolInput);
+      return await calendar.crearCita(toolInput, calendarId);
     case 'cancelar_cita':
-      return await calendar.cancelarCita(toolInput);
+      return await calendar.cancelarCita(toolInput, calendarId);
     case 'reagendar_cita':
-      return await calendar.reagendarCita(toolInput);
+      return await calendar.reagendarCita(toolInput, calendarId);
     case 'mis_citas':
-      return await calendar.misCitas(toolInput);
+      return await calendar.misCitas(toolInput, calendarId);
     case 'agenda_del_dia':
-      return await calendar.agendaDelDia(toolInput);
+      return await calendar.agendaDelDia(toolInput, calendarId);
     case 'cancelar_citas_del_dia':
-      return await calendar.cancelarCitasDelDia(toolInput);
+      return await calendar.cancelarCitasDelDia(toolInput, calendarId);
     default:
       return { error: `Herramienta desconocida: ${toolName}` };
   }
 }
 
-// System prompt para el agente paciente
-function buildPatientSystemPrompt() {
-  const c = config.clinic;
+function buildPatientSystemPrompt(c) {
   return `Eres María, la asistente virtual de ${c.name}. Atiendes por WhatsApp con un tono cálido, natural y amigable — como una recepcionista real.
 
 INFORMACIÓN DE LA CLÍNICA:
@@ -167,9 +156,7 @@ REGLAS:
 Fecha y hora actual: ${new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' })}`;
 }
 
-// System prompt para el agente odontólogo
-function buildDentistSystemPrompt() {
-  const c = config.clinic;
+function buildDentistSystemPrompt(c) {
   return `Eres el asistente de agenda del Dr./Dra. de ${c.name}. Tu rol es gestionar la agenda de forma eficiente.
 
 CAPACIDADES:
@@ -187,21 +174,20 @@ REGLAS:
 Fecha y hora actual: ${new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' })}`;
 }
 
-// Agente principal — loop de herramientas
-async function runAgent({ phone, message, pushName, isDentist = false }) {
-  // Guardar mensaje del usuario en memoria
-  await memory.saveMessage(phone, 'user', message);
+async function runAgent({ phone, message, pushName, isDentist = false, clientId = 'default' }) {
+  await memory.saveMessage(clientId, phone, 'user', message);
+  const history = await memory.getHistory(clientId, phone);
 
-  // Obtener historial
-  const history = await memory.getHistory(phone);
+  // Cargar config de la clínica: primero Redis por clientId, luego .env por defecto
+  const clientConfig = await memory.getClinicConfig(clientId);
+  const clinicConfig = clientConfig ? { ...config.clinic, ...clientConfig } : config.clinic;
+  const calendarId = clinicConfig.calendarId || config.google.calendarId;
 
-  const systemPrompt = isDentist ? buildDentistSystemPrompt() : buildPatientSystemPrompt();
+  const systemPrompt = isDentist ? buildDentistSystemPrompt(clinicConfig) : buildPatientSystemPrompt(clinicConfig);
   const tools = isDentist ? DENTIST_TOOLS : PATIENT_TOOLS;
 
-  // Si es la primera vez, agregar contexto del nombre
   const messages = history.length > 0 ? history : [{ role: 'user', content: message }];
 
-  // Agregar nombre del paciente al primer mensaje si lo tenemos
   if (!isDentist && pushName && messages.length === 1) {
     messages[0].content = `[El paciente se llama ${pushName}] ${messages[0].content}`;
   }
@@ -210,7 +196,6 @@ async function runAgent({ phone, message, pushName, isDentist = false }) {
   let iterations = 0;
   const maxIterations = 5;
 
-  // Loop agéntico — Claude puede llamar múltiples herramientas
   while (iterations < maxIterations) {
     iterations++;
 
@@ -222,47 +207,33 @@ async function runAgent({ phone, message, pushName, isDentist = false }) {
       messages,
     });
 
-    // Si Claude terminó (no necesita más herramientas)
-    if (response.stop_reason === 'end_turn') {
-      break;
-    }
+    if (response.stop_reason === 'end_turn') break;
 
-    // Si Claude quiere usar herramientas
     if (response.stop_reason === 'tool_use') {
       const toolUseBlocks = response.content.filter(b => b.type === 'tool_use');
-
-      // Agregar respuesta de Claude al historial temporal
       messages.push({ role: 'assistant', content: response.content });
 
-      // Ejecutar todas las herramientas solicitadas
       const toolResults = [];
       for (const toolUse of toolUseBlocks) {
-        const result = await executeTool(toolUse.name, toolUse.input);
+        const result = await executeTool(toolUse.name, toolUse.input, calendarId);
         toolResults.push({
           type: 'tool_result',
           tool_use_id: toolUse.id,
           content: JSON.stringify(result),
         });
       }
-
-      // Agregar resultados de herramientas al historial temporal
       messages.push({ role: 'user', content: toolResults });
     } else {
       break;
     }
   }
 
-  // Extraer texto de la respuesta final
   const textBlock = response.content.find(b => b.type === 'text');
   const finalResponse = textBlock?.text || 'Disculpa, hubo un problema. ¿Puedes repetir tu mensaje?';
 
-  // Guardar respuesta del agente en memoria persistente
-  await memory.saveMessage(phone, 'assistant', finalResponse);
+  await memory.saveMessage(clientId, phone, 'assistant', finalResponse);
 
-  return {
-    response: finalResponse,
-    toolsUsed: iterations > 1,
-  };
+  return { response: finalResponse, toolsUsed: iterations > 1 };
 }
 
 module.exports = { runAgent };

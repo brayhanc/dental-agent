@@ -12,37 +12,42 @@ async function getClient() {
   return client;
 }
 
-// Guarda un mensaje en el historial de conversación del paciente
-async function saveMessage(phone, role, content) {
+async function saveMessage(clientId, phone, role, content) {
   const redis = await getClient();
-  const key = `chat:${phone}`;
+  const key = `chat:${clientId}:${phone}`;
   const message = JSON.stringify({ role, content, timestamp: Date.now() });
   await redis.rPush(key, message);
-  // Mantener solo los últimos 20 mensajes (10 intercambios)
   await redis.lTrim(key, -20, -1);
-  // Expira en 7 días de inactividad
   await redis.expire(key, 60 * 60 * 24 * 7);
 }
 
-// Obtiene el historial de conversación del paciente
-async function getHistory(phone) {
+async function getHistory(clientId, phone) {
   const redis = await getClient();
-  const key = `chat:${phone}`;
+  const key = `chat:${clientId}:${phone}`;
   const messages = await redis.lRange(key, 0, -1);
   return messages.map(m => JSON.parse(m)).map(({ role, content }) => ({ role, content }));
 }
 
-// Limpia el historial de un paciente
-async function clearHistory(phone) {
+async function clearHistory(clientId, phone) {
   const redis = await getClient();
-  await redis.del(`chat:${phone}`);
+  await redis.del(`chat:${clientId}:${phone}`);
 }
 
-// Verifica si el modo humano está activo para un usuario
 async function isHumanActive(clientId, userId) {
   const redis = await getClient();
   const value = await redis.get(`human_active:${clientId}:${userId}`);
   return value === 'true';
 }
 
-module.exports = { saveMessage, getHistory, clearHistory, isHumanActive };
+async function getClinicConfig(clientId) {
+  const redis = await getClient();
+  const raw = await redis.get(`clinic_config:${clientId}`);
+  return raw ? JSON.parse(raw) : null;
+}
+
+async function setClinicConfig(clientId, config) {
+  const redis = await getClient();
+  await redis.set(`clinic_config:${clientId}`, JSON.stringify(config));
+}
+
+module.exports = { saveMessage, getHistory, clearHistory, isHumanActive, getClinicConfig, setClinicConfig };

@@ -10,13 +10,10 @@ function getCalendarClient() {
   return google.calendar({ version: 'v3', auth });
 }
 
-// Verifica disponibilidad de slots en los próximos días
-async function verificarDisponibilidad({ fecha, duracion_minutos = 60 }) {
+async function verificarDisponibilidad({ fecha, duracion_minutos = 60 }, calendarId) {
+  calendarId = calendarId || config.google.calendarId;
   try {
     const calendar = getCalendarClient();
-    const calendarId = config.google.calendarId;
-
-    // Buscar en los próximos 7 días si no se especifica fecha
     const start = fecha ? new Date(fecha) : new Date();
     start.setHours(8, 0, 0, 0);
     const end = new Date(start);
@@ -37,13 +34,11 @@ async function verificarDisponibilidad({ fecha, duracion_minutos = 60 }) {
       end: new Date(e.end.dateTime || e.end.date),
     }));
 
-    // Generar slots disponibles (8am-6pm, cada hora)
     const slots = [];
     const checkDate = new Date(start);
 
     while (checkDate < end && slots.length < 10) {
       const dayOfWeek = checkDate.getDay();
-      // Solo lunes a sábado
       if (dayOfWeek !== 0) {
         const maxHour = dayOfWeek === 6 ? 14 : 18;
         for (let hour = 8; hour < maxHour; hour++) {
@@ -52,9 +47,7 @@ async function verificarDisponibilidad({ fecha, duracion_minutos = 60 }) {
           const slotEnd = new Date(slotStart);
           slotEnd.setMinutes(slotEnd.getMinutes() + duracion_minutos);
 
-          const isBusy = busySlots.some(
-            b => slotStart < b.end && slotEnd > b.start
-          );
+          const isBusy = busySlots.some(b => slotStart < b.end && slotEnd > b.start);
 
           if (!isBusy && slotStart > new Date()) {
             slots.push({
@@ -77,8 +70,8 @@ async function verificarDisponibilidad({ fecha, duracion_minutos = 60 }) {
   }
 }
 
-// Crea una cita en Google Calendar
-async function crearCita({ datetime, tratamiento, nombre_paciente, telefono_paciente, notas = '' }) {
+async function crearCita({ datetime, tratamiento, nombre_paciente, telefono_paciente, notas = '' }, calendarId) {
+  calendarId = calendarId || config.google.calendarId;
   try {
     const calendar = getCalendarClient();
     const start = new Date(datetime);
@@ -86,7 +79,7 @@ async function crearCita({ datetime, tratamiento, nombre_paciente, telefono_paci
     end.setHours(end.getHours() + 1);
 
     const event = await calendar.events.insert({
-      calendarId: config.google.calendarId,
+      calendarId,
       resource: {
         summary: `${tratamiento} - ${nombre_paciente}`,
         description: `Paciente: ${nombre_paciente}\ntel:${telefono_paciente}\n${notas}`,
@@ -108,8 +101,8 @@ async function crearCita({ datetime, tratamiento, nombre_paciente, telefono_paci
   }
 }
 
-// Cancela una cita buscando por teléfono del paciente
-async function cancelarCita({ telefono_paciente, fecha = null }) {
+async function cancelarCita({ telefono_paciente, fecha = null }, calendarId) {
+  calendarId = calendarId || config.google.calendarId;
   try {
     const calendar = getCalendarClient();
     const now = new Date();
@@ -117,7 +110,7 @@ async function cancelarCita({ telefono_paciente, fecha = null }) {
     timeMax.setDate(timeMax.getDate() + 60);
 
     const response = await calendar.events.list({
-      calendarId: config.google.calendarId,
+      calendarId,
       timeMin: now.toISOString(),
       timeMax: timeMax.toISOString(),
       singleEvents: true,
@@ -126,18 +119,11 @@ async function cancelarCita({ telefono_paciente, fecha = null }) {
     });
 
     const events = response.data.items || [];
-    const cita = fecha
-      ? events.find(e => e.start.dateTime?.includes(fecha))
-      : events[0];
+    const cita = fecha ? events.find(e => e.start.dateTime?.includes(fecha)) : events[0];
 
-    if (!cita) {
-      return { success: false, message: 'No encontré citas próximas para ese número.' };
-    }
+    if (!cita) return { success: false, message: 'No encontré citas próximas para ese número.' };
 
-    await calendar.events.delete({
-      calendarId: config.google.calendarId,
-      eventId: cita.id,
-    });
+    await calendar.events.delete({ calendarId, eventId: cita.id });
 
     return {
       success: true,
@@ -149,8 +135,8 @@ async function cancelarCita({ telefono_paciente, fecha = null }) {
   }
 }
 
-// Reagenda una cita existente
-async function reagendarCita({ telefono_paciente, nuevo_datetime }) {
+async function reagendarCita({ telefono_paciente, nuevo_datetime }, calendarId) {
+  calendarId = calendarId || config.google.calendarId;
   try {
     const calendar = getCalendarClient();
     const now = new Date();
@@ -158,7 +144,7 @@ async function reagendarCita({ telefono_paciente, nuevo_datetime }) {
     timeMax.setDate(timeMax.getDate() + 60);
 
     const response = await calendar.events.list({
-      calendarId: config.google.calendarId,
+      calendarId,
       timeMin: now.toISOString(),
       timeMax: timeMax.toISOString(),
       singleEvents: true,
@@ -169,16 +155,14 @@ async function reagendarCita({ telefono_paciente, nuevo_datetime }) {
     const events = response.data.items || [];
     const cita = events[0];
 
-    if (!cita) {
-      return { success: false, message: 'No encontré citas próximas para reagendar.' };
-    }
+    if (!cita) return { success: false, message: 'No encontré citas próximas para reagendar.' };
 
     const newStart = new Date(nuevo_datetime);
     const newEnd = new Date(newStart);
     newEnd.setHours(newEnd.getHours() + 1);
 
     await calendar.events.update({
-      calendarId: config.google.calendarId,
+      calendarId,
       eventId: cita.id,
       resource: {
         ...cita,
@@ -197,8 +181,8 @@ async function reagendarCita({ telefono_paciente, nuevo_datetime }) {
   }
 }
 
-// Obtiene las citas de un paciente
-async function misCitas({ telefono_paciente }) {
+async function misCitas({ telefono_paciente }, calendarId) {
+  calendarId = calendarId || config.google.calendarId;
   try {
     const calendar = getCalendarClient();
     const now = new Date();
@@ -206,7 +190,7 @@ async function misCitas({ telefono_paciente }) {
     timeMax.setDate(timeMax.getDate() + 60);
 
     const response = await calendar.events.list({
-      calendarId: config.google.calendarId,
+      calendarId,
       timeMin: now.toISOString(),
       timeMax: timeMax.toISOString(),
       singleEvents: true,
@@ -215,10 +199,7 @@ async function misCitas({ telefono_paciente }) {
     });
 
     const events = response.data.items || [];
-
-    if (events.length === 0) {
-      return { citas: [], message: 'No tienes citas programadas.' };
-    }
+    if (events.length === 0) return { citas: [], message: 'No tienes citas programadas.' };
 
     const citas = events.map(e => ({
       tratamiento: e.summary,
@@ -233,8 +214,8 @@ async function misCitas({ telefono_paciente }) {
   }
 }
 
-// Para el odontólogo: agenda del día
-async function agendaDelDia({ fecha = null }) {
+async function agendaDelDia({ fecha = null }, calendarId) {
+  calendarId = calendarId || config.google.calendarId;
   try {
     const calendar = getCalendarClient();
     const day = fecha ? new Date(fecha) : new Date();
@@ -243,7 +224,7 @@ async function agendaDelDia({ fecha = null }) {
     dayEnd.setHours(23, 59, 59, 0);
 
     const response = await calendar.events.list({
-      calendarId: config.google.calendarId,
+      calendarId,
       timeMin: day.toISOString(),
       timeMax: dayEnd.toISOString(),
       singleEvents: true,
@@ -268,8 +249,8 @@ async function agendaDelDia({ fecha = null }) {
   }
 }
 
-// Para el odontólogo: cancelar todas las citas de un día y notificar pacientes
-async function cancelarCitasDelDia({ fecha, motivo = 'inconveniente en la agenda' }) {
+async function cancelarCitasDelDia({ fecha, motivo = 'inconveniente en la agenda' }, calendarId) {
+  calendarId = calendarId || config.google.calendarId;
   try {
     const calendar = getCalendarClient();
     const day = new Date(fecha);
@@ -278,7 +259,7 @@ async function cancelarCitasDelDia({ fecha, motivo = 'inconveniente en la agenda
     dayEnd.setHours(23, 59, 59, 0);
 
     const response = await calendar.events.list({
-      calendarId: config.google.calendarId,
+      calendarId,
       timeMin: day.toISOString(),
       timeMax: dayEnd.toISOString(),
       singleEvents: true,
@@ -288,7 +269,6 @@ async function cancelarCitasDelDia({ fecha, motivo = 'inconveniente en la agenda
     const pacientes = [];
 
     for (const event of events) {
-      // Extraer teléfono de la descripción
       const telMatch = event.description?.match(/tel:(\d+)/);
       if (telMatch) {
         pacientes.push({
@@ -297,10 +277,7 @@ async function cancelarCitasDelDia({ fecha, motivo = 'inconveniente en la agenda
           hora: new Date(event.start.dateTime).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' }),
         });
       }
-      await calendar.events.delete({
-        calendarId: config.google.calendarId,
-        eventId: event.id,
-      });
+      await calendar.events.delete({ calendarId, eventId: event.id });
     }
 
     return {
@@ -316,12 +293,4 @@ async function cancelarCitasDelDia({ fecha, motivo = 'inconveniente en la agenda
   }
 }
 
-module.exports = {
-  verificarDisponibilidad,
-  crearCita,
-  cancelarCita,
-  reagendarCita,
-  misCitas,
-  agendaDelDia,
-  cancelarCitasDelDia,
-};
+module.exports = { verificarDisponibilidad, crearCita, cancelarCita, reagendarCita, misCitas, agendaDelDia, cancelarCitasDelDia };

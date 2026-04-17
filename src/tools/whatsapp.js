@@ -3,7 +3,7 @@ const config = require('../config');
 
 async function enviarMensaje(telefono, mensaje) {
   try {
-    const url = `${config.evolution.apiUrl}/message/sendText/${config.evolution.instance}`;
+    const url = `${config.evolution.apiUrl}/message/sendText/${encodeURIComponent(config.evolution.instance)}`;
     await axios.post(url, {
       number: telefono,
       text: mensaje,
