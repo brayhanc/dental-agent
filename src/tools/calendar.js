@@ -315,8 +315,9 @@ async function reprogramarCitaPaciente({ telefono_paciente, motivo = 'un ajuste 
 
     await enviarMensaje(telefono_paciente, mensaje);
 
-    // Guardar el mensaje en el historial del paciente para que María tenga contexto cuando responda
-    await memory.saveMessage(clientId, telefono_paciente, 'assistant', mensaje);
+    // Guardar en historial con número normalizado (con código de país) para que coincida con el webhook
+    const telefonoNorm = telefono_paciente.startsWith('57') ? telefono_paciente : `57${telefono_paciente}`;
+    await memory.saveMessage(clientId, telefonoNorm, 'assistant', mensaje);
 
     return {
       success: true,
