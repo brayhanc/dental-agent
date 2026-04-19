@@ -354,8 +354,8 @@ Si algo falla: di qué falló y sugiere alternativa.
 Fecha y hora actual: ${getColombiaTime()}`;
 }
 
-const CONFIRMACIONES = /^(sí|si|dale|listo|ok|confirmo|perfecto|claro|sip|yes|obvio|por supuesto|adelante|hazlo|procede)$/i;
-const RECHAZOS = /^(no|nel|nope|cancela|cancelar|olvídalo|olvidalo|no gracias|mejor no)$/i;
+const CONFIRMACIONES = /^(sí|si|dale|listo|ok|confirmo|perfecto|claro|sip|yes|obvio|por supuesto|adelante|hazlo|procede)\b/i;
+const RECHAZOS = /^(no|nel|nope|cancela|cancelar|olvídalo|olvidalo|no gracias|mejor no)\b/i;
 
 async function runAgent({ phone, message, pushName, isDentist = false, clientId = 'default' }) {
   await memory.saveMessage(clientId, phone, 'user', message);
@@ -372,7 +372,9 @@ async function runAgent({ phone, message, pushName, isDentist = false, clientId 
         const calId2 = clinicConf2.calendarId || config.google.calendarId;
         const result = await executeTool(pendingAction.tool, { ...pendingAction.params, confirmed: true }, calId2, clientId, phone);
         const respuesta = result.success
-          ? result.message || 'Listo, cambio aplicado 👍'
+          ? result.confirmacion
+            ? `Listo ✓ Cita confirmada para el ${result.fecha} a las ${result.hora}. ¡Te esperamos! 🙏`
+            : result.message || 'Listo, cambio aplicado 👍'
           : `No pude completarlo: ${result.error || result.message}`;
         await memory.saveMessage(clientId, phone, 'assistant', respuesta);
         return { response: respuesta, toolsUsed: true };
@@ -383,6 +385,10 @@ async function runAgent({ phone, message, pushName, isDentist = false, clientId 
         await memory.saveMessage(clientId, phone, 'assistant', respuesta);
         return { response: respuesta, toolsUsed: false };
       }
+      // Hay acción pendiente pero el mensaje no es confirmación ni rechazo — recordar sin pasar a Claude
+      const respuestaPendiente = `Tengo pendiente confirmar: *${pendingAction.descripcion}*\n¿Confirmas? Responde "sí" o "no".`;
+      await memory.saveMessage(clientId, phone, 'assistant', respuestaPendiente);
+      return { response: respuestaPendiente, toolsUsed: false };
     }
   } catch (err) {
     console.error('[interceptor] Error:', err.message);
