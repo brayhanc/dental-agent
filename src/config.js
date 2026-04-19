@@ -3,7 +3,7 @@ require('dotenv').config();
 module.exports = {
   anthropic: {
     apiKey: process.env.ANTHROPIC_API_KEY,
-    model: 'claude-sonnet-4-5',
+    model: 'claude-haiku-4-5-20251001',
   },
   redis: {
     url: process.env.REDIS_URL || 'redis://localhost:6379',
