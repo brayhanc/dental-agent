@@ -3,7 +3,7 @@ require('dotenv').config();
 module.exports = {
   anthropic: {
     apiKey: process.env.ANTHROPIC_API_KEY,
-    model: 'claude-haiku-4-5-20251001',
+    model: 'claude-sonnet-4-5',
   },
   redis: {
     url: process.env.REDIS_URL || 'redis://localhost:6379',
@@ -19,6 +19,9 @@ module.exports = {
       client_email: process.env.GOOGLE_CLIENT_EMAIL,
       private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
     },
+  },
+  assemblyai: {
+    apiKey: process.env.ASSEMBLYAI_API_KEY,
   },
   server: {
     port: process.env.PORT || 3000,
