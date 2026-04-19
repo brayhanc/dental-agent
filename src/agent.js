@@ -131,7 +131,7 @@ const DENTIST_TOOLS = [
   },
 ];
 
-async function executeTool(toolName, toolInput, calendarId, clientId = 'default') {
+async function executeTool(toolName, toolInput, calendarId, clientId = 'default', phone = null) {
   console.log(`Ejecutando herramienta: ${toolName}`, toolInput);
   switch (toolName) {
     case 'verificar_disponibilidad':
@@ -139,7 +139,7 @@ async function executeTool(toolName, toolInput, calendarId, clientId = 'default'
     case 'crear_cita':
       return await calendar.crearCita(toolInput, calendarId);
     case 'cancelar_cita':
-      return await calendar.cancelarCita({ ...toolInput, clientId }, calendarId);
+      return await calendar.cancelarCita({ ...toolInput, clientId, phone }, calendarId);
     case 'reagendar_cita':
       return await calendar.reagendarCita(toolInput, calendarId);
     case 'mis_citas':
@@ -354,8 +354,40 @@ Si algo falla: di qué falló y sugiere alternativa.
 Fecha y hora actual: ${new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' })}`;
 }
 
+const CONFIRMACIONES = /^(sí|si|dale|listo|ok|confirmo|perfecto|claro|sip|yes|obvio|por supuesto|adelante|hazlo|procede)$/i;
+const RECHAZOS = /^(no|nel|nope|cancela|cancelar|olvídalo|olvidalo|no gracias|mejor no)$/i;
+
 async function runAgent({ phone, message, pushName, isDentist = false, clientId = 'default' }) {
   await memory.saveMessage(clientId, phone, 'user', message);
+
+  // Interceptor: si hay acción pendiente y el mensaje es confirmación o rechazo, actuar sin pasar por Claude
+  try {
+    const pendingAction = await memory.getPendingAction(clientId, phone);
+    if (pendingAction) {
+      const msgLimpio = message.trim().toLowerCase();
+      if (CONFIRMACIONES.test(msgLimpio)) {
+        await memory.clearPendingAction(clientId, phone);
+        const clientConfig2 = await memory.getClinicConfig(clientId);
+        const clinicConf2 = clientConfig2 ? { ...config.clinic, ...clientConfig2 } : config.clinic;
+        const calId2 = clinicConf2.calendarId || config.google.calendarId;
+        const result = await executeTool(pendingAction.tool, { ...pendingAction.params, confirmed: true }, calId2, clientId, phone);
+        const respuesta = result.success
+          ? result.message || 'Listo, cambio aplicado 👍'
+          : `No pude completarlo: ${result.error || result.message}`;
+        await memory.saveMessage(clientId, phone, 'assistant', respuesta);
+        return { response: respuesta, toolsUsed: true };
+      }
+      if (RECHAZOS.test(msgLimpio)) {
+        await memory.clearPendingAction(clientId, phone);
+        const respuesta = 'Entendido, no hago ningún cambio. ¿En qué más te ayudo?';
+        await memory.saveMessage(clientId, phone, 'assistant', respuesta);
+        return { response: respuesta, toolsUsed: false };
+      }
+    }
+  } catch (err) {
+    console.error('[interceptor] Error:', err.message);
+  }
+
   const history = await memory.getHistory(clientId, phone);
 
   // Cargar config de la clínica: primero Redis por clientId, luego .env por defecto
@@ -395,7 +427,7 @@ async function runAgent({ phone, message, pushName, isDentist = false, clientId 
 
       const toolResults = [];
       for (const toolUse of toolUseBlocks) {
-        const result = await executeTool(toolUse.name, toolUse.input, calendarId, clientId);
+        const result = await executeTool(toolUse.name, toolUse.input, calendarId, clientId, phone);
         toolResults.push({
           type: 'tool_result',
           tool_use_id: toolUse.id,

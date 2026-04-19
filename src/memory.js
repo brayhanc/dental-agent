@@ -50,4 +50,42 @@ async function setClinicConfig(clientId, config) {
   await redis.set(`clinic_config:${clientId}`, JSON.stringify(config));
 }
 
-module.exports = { saveMessage, getHistory, clearHistory, isHumanActive, getClinicConfig, setClinicConfig };
+async function savePendingAction(clientId, phone, action) {
+  const redis = await getClient();
+  const key = `pending_action:${clientId}:${phone}`;
+  const data = { ...action, proposed_at: Date.now(), expires_at: Date.now() + 5 * 60 * 1000 };
+  await redis.set(key, JSON.stringify(data), { EX: 300 });
+  return data;
+}
+
+async function getPendingAction(clientId, phone) {
+  const redis = await getClient();
+  const key = `pending_action:${clientId}:${phone}`;
+  const raw = await redis.get(key);
+  if (!raw) return null;
+  const action = JSON.parse(raw);
+  if (Date.now() > action.expires_at) { await redis.del(key); return null; }
+  return action;
+}
+
+async function clearPendingAction(clientId, phone) {
+  const redis = await getClient();
+  await redis.del(`pending_action:${clientId}:${phone}`);
+}
+
+async function addCancelledPatient(clientId, patientInfo) {
+  const redis = await getClient();
+  const key = `cancelled_patients:${clientId}`;
+  await redis.lPush(key, JSON.stringify({ ...patientInfo, cancelledAt: Date.now() }));
+  await redis.lTrim(key, 0, 49);
+  await redis.expire(key, 60 * 60 * 24 * 30);
+}
+
+async function getCancelledPatients(clientId, limit = 5) {
+  const redis = await getClient();
+  const key = `cancelled_patients:${clientId}`;
+  const items = await redis.lRange(key, 0, limit - 1);
+  return items.map(i => JSON.parse(i));
+}
+
+module.exports = { saveMessage, getHistory, clearHistory, isHumanActive, getClinicConfig, setClinicConfig, addCancelledPatient, getCancelledPatients, savePendingAction, getPendingAction, clearPendingAction };

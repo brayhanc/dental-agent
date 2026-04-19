@@ -1,5 +1,7 @@
 const { google } = require('googleapis');
 const config = require('../config');
+const { enviarMensaje } = require('./whatsapp');
+const memory = require('../memory');
 
 const TZ = 'America/Bogota';
 
@@ -168,7 +170,72 @@ async function crearCita({ datetime, tratamiento, nombre_paciente, telefono_paci
   }
 }
 
-async function cancelarCita({ telefono_paciente, fecha = null }, calendarId) {
+async function cancelarCita({ telefono_paciente, fecha = null, clientId = 'default', phone = null, confirmed = false }, calendarId) {
+  calendarId = calendarId || config.google.calendarId;
+  try {
+    const cal = getCalendarClient();
+    const now = new Date();
+    const timeMax = new Date(now.getTime() + 60 * 24 * 60 * 60 * 1000);
+
+    const response = await cal.events.list({
+      calendarId,
+      timeMin: now.toISOString(),
+      timeMax: timeMax.toISOString(),
+      singleEvents: true,
+      orderBy: 'startTime',
+      q: telefono_paciente,
+    });
+
+    const events = response.data.items || [];
+
+    // Guardrail: existencia
+    if (events.length === 0) return { success: false, error: 'No encontré citas próximas para ese número.' };
+
+    // Guardrail: unicidad — si hay varias citas y no especificó fecha
+    const candidatas = fecha ? events.filter(e => e.start.dateTime?.includes(fecha)) : events;
+    if (!fecha && events.length > 1) {
+      const lista = events.slice(0, 3).map(e =>
+        `- ${e.summary}: ${formatFecha(new Date(e.start.dateTime))} a las ${formatHora(new Date(e.start.dateTime))}`
+      ).join('\n');
+      return { success: false, error: `Tienes ${events.length} citas próximas. ¿Cuál quieres cancelar?\n${lista}` };
+    }
+
+    const cita = candidatas[0] || events[0];
+    if (!cita) return { success: false, error: 'No encontré la cita con esa fecha.' };
+
+    const citaDesc = `${cita.summary} — ${formatFecha(new Date(cita.start.dateTime))} a las ${formatHora(new Date(cita.start.dateTime))}`;
+
+    // Si no está confirmado: guardar propuesta y pedir confirmación
+    if (!confirmed && phone) {
+      await memory.savePendingAction(clientId, phone, {
+        tool: 'cancelar_cita',
+        params: { telefono_paciente, fecha: cita.start.dateTime, clientId, phone, confirmed: true },
+        descripcion: citaDesc,
+      });
+      return {
+        requires_confirmation: true,
+        propuesta: citaDesc,
+        instruccion: `Pregunta al paciente: "¿Confirmas cancelar: ${citaDesc}?"`,
+      };
+    }
+
+    // Ejecutar cancelación
+    await cal.events.delete({ calendarId, eventId: cita.id });
+
+    await memory.addCancelledPatient(clientId, {
+      telefono: telefono_paciente,
+      nombre: cita.summary,
+      fechaAnterior: formatFecha(new Date(cita.start.dateTime)),
+    });
+
+    return { success: true, message: `Cita cancelada: ${citaDesc}` };
+  } catch (error) {
+    console.error('Error cancelarCita:', error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+async function reprogramarCitaPaciente({ telefono_paciente, motivo = 'un ajuste en la agenda', clientId = 'default' }, calendarId) {
   calendarId = calendarId || config.google.calendarId;
   try {
     const calendar = getCalendarClient();
@@ -185,18 +252,73 @@ async function cancelarCita({ telefono_paciente, fecha = null }, calendarId) {
     });
 
     const events = response.data.items || [];
-    const cita = fecha ? events.find(e => e.start.dateTime?.includes(fecha)) : events[0];
+    const cita = events[0];
+    if (!cita) return { success: false, message: 'No encontré cita para ese paciente.' };
 
-    if (!cita) return { success: false, message: 'No encontré citas próximas para ese número.' };
+    const citaInfo = {
+      summary: cita.summary,
+      fecha: formatFecha(new Date(cita.start.dateTime)),
+      hora: formatHora(new Date(cita.start.dateTime)),
+    };
 
+    // Obtener horarios disponibles para ofrecer al paciente
+    const slotsResult = await verificarDisponibilidad({ duracion_minutos: 60 }, calendarId);
+    const opciones = slotsResult.slots.slice(0, 3);
+
+    // Cancelar la cita actual
     await calendar.events.delete({ calendarId, eventId: cita.id });
+
+    // Guardar en lista de cancelados
+    await memory.addCancelledPatient(clientId, {
+      telefono: telefono_paciente,
+      nombre: cita.summary,
+      fechaAnterior: citaInfo.fecha,
+    });
+
+    // Notificar al paciente por WhatsApp
+    const opcionesTexto = opciones.map((s, i) => `${i + 1}. ${s.fecha} a las ${s.hora}`).join('\n');
+    const mensaje = opciones.length > 0
+      ? `Hola! Tu cita de *${cita.summary}* del ${citaInfo.fecha} a las ${citaInfo.hora} debe reprogramarse por ${motivo}.\n\nTe ofrecemos estos horarios:\n${opcionesTexto}\n\n¿Cuál te queda bien? 🙏`
+      : `Hola! Tu cita de *${cita.summary}* del ${citaInfo.fecha} a las ${citaInfo.hora} debe reprogramarse por ${motivo}. Por favor escríbenos para coordinar un nuevo horario 🙏`;
+
+    await enviarMensaje(telefono_paciente, mensaje);
 
     return {
       success: true,
-      message: `Cita cancelada: ${cita.summary} del ${formatFecha(new Date(cita.start.dateTime))}`,
+      cita_cancelada: citaInfo,
+      horarios_ofrecidos: opciones,
+      mensaje_enviado: true,
+      nota: 'El paciente fue notificado. Cuando responda, María gestionará la nueva cita.',
     };
   } catch (error) {
-    console.error('Error cancelarCita:', error.message);
+    console.error('Error reprogramarCitaPaciente:', error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+async function optimizarSlotLibre({ fecha, hora, clientId = 'default' }, calendarId) {
+  calendarId = calendarId || config.google.calendarId;
+  try {
+    const candidatos = await memory.getCancelledPatients(clientId, 3);
+    if (candidatos.length === 0) {
+      return { success: true, resultado: 'sin_candidatos', mensaje: 'No hay pacientes en lista para contactar.' };
+    }
+
+    const resultados = [];
+    for (const paciente of candidatos) {
+      const mensaje = `Hola${paciente.nombre ? ` ${paciente.nombre.split(' ')[0]}` : ''}! Se liberó un espacio el ${fecha} a las ${hora}. ¿Te gustaría tomarlo? 😊`;
+      await enviarMensaje(paciente.telefono, mensaje);
+      resultados.push({ telefono: paciente.telefono, nombre: paciente.nombre, mensaje_enviado: true });
+    }
+
+    return {
+      success: true,
+      resultado: 'candidatos_contactados',
+      contactados: resultados,
+      nota: 'Los pacientes fueron notificados. Sus respuestas llegarán por WhatsApp.',
+    };
+  } catch (error) {
+    console.error('Error optimizarSlotLibre:', error.message);
     return { success: false, error: error.message };
   }
 }
@@ -361,4 +483,4 @@ async function cancelarCitasDelDia({ fecha, motivo = 'inconveniente en la agenda
   }
 }
 
-module.exports = { verificarDisponibilidad, crearCita, cancelarCita, reagendarCita, misCitas, agendaDelDia, cancelarCitasDelDia };
+module.exports = { verificarDisponibilidad, crearCita, cancelarCita, reagendarCita, misCitas, agendaDelDia, cancelarCitasDelDia, reprogramarCitaPaciente, optimizarSlotLibre };
