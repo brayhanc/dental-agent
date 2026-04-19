@@ -341,8 +341,17 @@ async function reprogramarCitaPaciente({ telefono_paciente, motivo = 'un ajuste 
       : `Hola! Tu cita de *${cita.summary}* del ${citaInfo.fecha} a las ${citaInfo.hora} debe reprogramarse por ${motivo}. Por favor escríbenos para coordinar un nuevo horario 🙏`;
 
     const telefonoNorm = telefono_paciente.startsWith('57') ? telefono_paciente : `57${telefono_paciente}`;
+    const telefonoLimpio = telefono_paciente.replace(/^57/, '');
+    const partes = cita.summary.split(' - ');
+    const tratamientoOriginal = partes[0] || 'Consulta';
+    const nombreOriginal = partes[1] || cita.summary;
+
     await enviarMensaje(telefonoNorm, mensaje);
     await memory.saveMessage(clientId, telefonoNorm, 'assistant', mensaje);
+
+    // Contexto para que Sonnet use crear_cita (no reagendar_cita) cuando el paciente responda
+    const contexto = `Contexto interno: la cita anterior fue cancelada. Cuando ${nombreOriginal} confirme un horario, debes usar crear_cita con: tratamiento="${tratamientoOriginal}", nombre_paciente="${nombreOriginal}", telefono_paciente="${telefonoLimpio}". NO uses reagendar_cita.`;
+    await memory.saveMessage(clientId, telefonoNorm, 'assistant', contexto);
 
     return {
       success: true,
