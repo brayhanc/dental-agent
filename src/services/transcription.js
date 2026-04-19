@@ -68,13 +68,22 @@ async function transcribeAudio({ audioBase64, mimeType = 'audio/ogg' }) {
   const uploadUrl = uploadRes.data.upload_url;
   if (!uploadUrl) throw new Error('AssemblyAI no retornó upload_url');
 
-  const transcriptRes = await axios.post(
-    'https://api.assemblyai.com/v2/transcript',
-    { audio_url: uploadUrl, language_detection: true },
-    { headers: { ...authHeaders, 'content-type': 'application/json' } }
-  );
+  console.log(`[transcription] Upload OK — url: ${uploadUrl}`);
+
+  let transcriptRes;
+  try {
+    transcriptRes = await axios.post(
+      'https://api.assemblyai.com/v2/transcript',
+      { audio_url: uploadUrl },
+      { headers: { ...authHeaders, 'content-type': 'application/json' } }
+    );
+  } catch (err) {
+    const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
+    throw new Error(`AssemblyAI transcript falló (${err.response?.status}): ${detail}`);
+  }
 
   const transcriptId = transcriptRes.data.id;
+  console.log(`[transcription] Transcript ID: ${transcriptId}`);
 
   for (let i = 0; i < 60; i++) {
     await new Promise(r => setTimeout(r, 3000));
