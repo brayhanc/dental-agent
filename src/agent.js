@@ -5,6 +5,12 @@ const calendar = require('./tools/calendar');
 
 const client = new Anthropic({ apiKey: config.anthropic.apiKey });
 
+function getColombiaTime() {
+  const now = new Date();
+  const colombiaTime = new Date(now.getTime() - 5 * 60 * 60 * 1000);
+  return colombiaTime.toISOString().replace('T', ' ').substring(0, 16) + ' (hora Colombia UTC-5)';
+}
+
 const PATIENT_TOOLS = [
   {
     name: 'verificar_disponibilidad',
@@ -292,7 +298,7 @@ Si hay duda → pregunta de nuevo.
 
 NUNCA asumas datos faltantes. Si no tienes nombre, fecha o teléfono claramente identificados → pídelos.
 
-Fecha y hora actual: ${new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' })}`;
+Fecha y hora actual: ${getColombiaTime()}`;
 }
 
 function buildDentistSystemPrompt(c) {
@@ -351,7 +357,7 @@ NUNCA asumas. Exactitud sobre rapidez.
 Cuando informes resultados: paciente · fecha anterior · acción tomada · estado.
 Si algo falla: di qué falló y sugiere alternativa.
 
-Fecha y hora actual: ${new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' })}`;
+Fecha y hora actual: ${getColombiaTime()}`;
 }
 
 const CONFIRMACIONES = /^(sí|si|dale|listo|ok|confirmo|perfecto|claro|sip|yes|obvio|por supuesto|adelante|hazlo|procede)$/i;
