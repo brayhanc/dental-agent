@@ -26,7 +26,7 @@ const PATIENT_TOOLS = [
   },
   {
     name: 'crear_cita',
-    description: 'Crea una cita en el calendario. Úsala SOLO cuando el paciente haya confirmado fecha y hora específica.',
+    description: 'Crea una cita en el calendario. Llámala INMEDIATAMENTE cuando tengas fecha, hora, tratamiento y nombre. NO esperes confirmación verbal — el sistema pedirá confirmación automáticamente al paciente.',
     input_schema: {
       type: 'object',
       properties: {
@@ -53,7 +53,7 @@ const PATIENT_TOOLS = [
   },
   {
     name: 'reagendar_cita',
-    description: 'Reagenda la próxima cita del paciente a una nueva fecha/hora.',
+    description: 'Reagenda la próxima cita del paciente. Llámala INMEDIATAMENTE cuando tengas el nuevo horario — el sistema pedirá confirmación automáticamente.',
     input_schema: {
       type: 'object',
       properties: {
@@ -147,7 +147,7 @@ async function executeTool(toolName, toolInput, calendarId, clientId = 'default'
     case 'cancelar_cita':
       return await calendar.cancelarCita({ ...toolInput, clientId, phone }, calendarId);
     case 'reagendar_cita':
-      return await calendar.reagendarCita(toolInput, calendarId);
+      return await calendar.reagendarCita({ ...toolInput, clientId, phone }, calendarId);
     case 'mis_citas':
       return await calendar.misCitas(toolInput, calendarId);
     case 'agenda_del_dia':
@@ -286,15 +286,9 @@ Antes de llamar cualquier herramienta, clasifica la acción:
 🟢 BAJO RIESGO → ejecuta directo
 - verificar_disponibilidad
 - mis_citas
-
-🟡 RIESGO MEDIO → confirma antes de ejecutar
-- crear_cita: "¿Confirmo tu cita el [día] a las [hora] para [tratamiento]?"
-- cancelar_cita: "¿Confirmas que quieres cancelar tu cita del [fecha] a las [hora]?"
-- reagendar_cita: "¿Confirmas el cambio al [nueva fecha] a las [nueva hora]?"
-
-REGLA: Solo ejecuta si el paciente responde SÍ de forma clara.
-Si dice "sí", "listo", "dale", "perfecto" → ejecuta.
-Si hay duda → pregunta de nuevo.
+- crear_cita: llama el tool en cuanto tengas fecha, hora, tratamiento y nombre (el sistema pide confirmación solo)
+- reagendar_cita: llama el tool en cuanto tengas el nuevo horario (el sistema pide confirmación solo)
+- cancelar_cita: llama el tool en cuanto tengas el teléfono (el sistema pide confirmación solo)
 
 NUNCA asumas datos faltantes. Si no tienes nombre, fecha o teléfono claramente identificados → pídelos.
 

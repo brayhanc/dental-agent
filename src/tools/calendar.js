@@ -358,7 +358,7 @@ async function optimizarSlotLibre({ fecha, hora, clientId = 'default' }, calenda
   }
 }
 
-async function reagendarCita({ telefono_paciente, nuevo_datetime }, calendarId) {
+async function reagendarCita({ telefono_paciente, nuevo_datetime, clientId = 'default', phone = null, confirmed = false }, calendarId) {
   calendarId = calendarId || config.google.calendarId;
   try {
     const newStart = parseDatetime(nuevo_datetime);
@@ -383,6 +383,21 @@ async function reagendarCita({ telefono_paciente, nuevo_datetime }, calendarId) 
 
     const cita = (response.data.items || [])[0];
     if (!cita) return { success: false, message: 'No encontré citas próximas para reagendar.' };
+
+    const resumen = `cambio al ${formatFecha(newStart)} a las ${formatHora(newStart)}`;
+
+    if (!confirmed && phone) {
+      await memory.savePendingAction(clientId, phone, {
+        tool: 'reagendar_cita',
+        params: { telefono_paciente, nuevo_datetime, clientId, phone, confirmed: true },
+        descripcion: resumen,
+      });
+      return {
+        requires_confirmation: true,
+        propuesta: resumen,
+        instruccion: `Pregunta al paciente: "¿Confirmas el ${resumen}?"`,
+      };
+    }
 
     const newEnd = new Date(newStart.getTime() + 60 * 60 * 1000);
 
