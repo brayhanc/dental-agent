@@ -52,10 +52,18 @@ async function transcribeAudio({ audioBase64, mimeType = 'audio/ogg' }) {
   const authHeaders = { authorization: apiKey };
 
   const buffer = Buffer.from(audioBase64, 'base64');
-  const uploadRes = await axios.post('https://api.assemblyai.com/v2/upload', buffer, {
-    headers: { ...authHeaders, 'content-type': 'application/octet-stream' },
-    maxBodyLength: Infinity,
-  });
+  console.log(`[transcription] Buffer size: ${buffer.length} bytes, API key presente: ${!!apiKey}`);
+
+  let uploadRes;
+  try {
+    uploadRes = await axios.post('https://api.assemblyai.com/v2/upload', buffer, {
+      headers: { ...authHeaders, 'content-type': 'application/octet-stream' },
+      maxBodyLength: Infinity,
+    });
+  } catch (err) {
+    const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
+    throw new Error(`AssemblyAI upload falló (${err.response?.status}): ${detail}`);
+  }
 
   const uploadUrl = uploadRes.data.upload_url;
   if (!uploadUrl) throw new Error('AssemblyAI no retornó upload_url');
