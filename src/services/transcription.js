@@ -53,7 +53,7 @@ async function transcribeAudio({ audioBase64, mimeType = 'audio/ogg' }) {
 
   const buffer = Buffer.from(audioBase64, 'base64');
   const uploadRes = await axios.post('https://api.assemblyai.com/v2/upload', buffer, {
-    headers: { ...authHeaders, 'content-type': mimeType },
+    headers: { ...authHeaders, 'content-type': 'application/octet-stream' },
     maxBodyLength: Infinity,
   });
 
