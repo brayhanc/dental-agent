@@ -4,6 +4,10 @@ const { enviarMensaje } = require('./whatsapp');
 const memory = require('../memory');
 
 const TZ = 'America/Bogota';
+const CO_OFFSET_MS = -5 * 60 * 60 * 1000;
+
+const DIAS = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+const MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
 
 function getCalendarClient() {
   const auth = new google.auth.JWT({
@@ -14,20 +18,16 @@ function getCalendarClient() {
   return google.calendar({ version: 'v3', auth });
 }
 
-// Obtiene componentes de fecha en hora colombiana
+// Obtiene componentes de fecha en hora colombiana (UTC-5, sin DST, sin ICU)
 function coTime(date = new Date()) {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: TZ,
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', hour12: false,
-  }).formatToParts(date);
-  const get = (type) => parseInt(parts.find(p => p.type === type).value);
-  const year = get('year'), month = get('month'), day = get('day');
+  const co = new Date(date.getTime() + CO_OFFSET_MS);
   return {
-    year, month, day,
-    hour: get('hour'),
-    minute: get('minute'),
-    dayOfWeek: new Date(`${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}T12:00:00-05:00`).getDay(),
+    year: co.getUTCFullYear(),
+    month: co.getUTCMonth() + 1,
+    day: co.getUTCDate(),
+    hour: co.getUTCHours(),
+    minute: co.getUTCMinutes(),
+    dayOfWeek: co.getUTCDay(),
   };
 }
 
@@ -42,12 +42,24 @@ function nextDay(date) {
   return coDate(year, month, day + 1, 0, 0);
 }
 
+// Parsea datetime — si no trae zona horaria, asume Colombia (UTC-5)
+function parseDatetime(datetime) {
+  if (datetime.endsWith('Z') || datetime.includes('+') || /T.*-\d{2}:\d{2}$/.test(datetime)) {
+    return new Date(datetime);
+  }
+  return new Date(datetime + '-05:00');
+}
+
 function formatFecha(date) {
-  return date.toLocaleDateString('es-CO', { timeZone: TZ, weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  const { year, month, day, dayOfWeek } = coTime(date);
+  return `${DIAS[dayOfWeek]}, ${day} de ${MESES[month - 1]} de ${year}`;
 }
 
 function formatHora(date) {
-  return date.toLocaleTimeString('es-CO', { timeZone: TZ, hour: '2-digit', minute: '2-digit' });
+  const { hour, minute } = coTime(date);
+  const h = hour % 12 || 12;
+  const ampm = hour < 12 ? 'a.m.' : 'p.m.';
+  return `${String(h).padStart(2, '0')}:${String(minute).padStart(2, '0')} ${ampm}`;
 }
 
 // Valida que un datetime esté dentro del horario laboral (Colombia)
@@ -133,7 +145,7 @@ async function verificarDisponibilidad({ fecha, duracion_minutos = 60 }, calenda
 async function crearCita({ datetime, tratamiento, nombre_paciente, telefono_paciente, notas = '' }, calendarId) {
   calendarId = calendarId || config.google.calendarId;
   try {
-    const start = new Date(datetime);
+    const start = parseDatetime(datetime);
 
     const validacion = validarHorarioLaboral(start);
     if (!validacion.valido) {
@@ -326,7 +338,7 @@ async function optimizarSlotLibre({ fecha, hora, clientId = 'default' }, calenda
 async function reagendarCita({ telefono_paciente, nuevo_datetime }, calendarId) {
   calendarId = calendarId || config.google.calendarId;
   try {
-    const newStart = new Date(nuevo_datetime);
+    const newStart = parseDatetime(nuevo_datetime);
 
     const validacion = validarHorarioLaboral(newStart);
     if (!validacion.valido) {
