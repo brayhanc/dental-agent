@@ -105,9 +105,33 @@ const DENTIST_TOOLS = [
       required: [],
     },
   },
+  {
+    name: 'reprogramar_cita_paciente',
+    description: 'Reprograma la cita de un paciente: cancela la cita actual, le envía WhatsApp con horarios disponibles y espera su confirmación.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        telefono_paciente: { type: 'string', description: 'Teléfono del paciente sin +' },
+        motivo: { type: 'string', description: 'Motivo del cambio para informar al paciente' },
+      },
+      required: ['telefono_paciente'],
+    },
+  },
+  {
+    name: 'optimizar_slot_libre',
+    description: 'Cuando queda un espacio libre en la agenda, contacta automáticamente hasta 3 pacientes de la lista de cancelados para ofrecerles ese horario.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        fecha: { type: 'string', description: 'Fecha del espacio libre (ej: lunes 20 de abril)' },
+        hora: { type: 'string', description: 'Hora del espacio libre (ej: 10:00 am)' },
+      },
+      required: ['fecha', 'hora'],
+    },
+  },
 ];
 
-async function executeTool(toolName, toolInput, calendarId) {
+async function executeTool(toolName, toolInput, calendarId, clientId = 'default') {
   console.log(`Ejecutando herramienta: ${toolName}`, toolInput);
   switch (toolName) {
     case 'verificar_disponibilidad':
@@ -115,7 +139,7 @@ async function executeTool(toolName, toolInput, calendarId) {
     case 'crear_cita':
       return await calendar.crearCita(toolInput, calendarId);
     case 'cancelar_cita':
-      return await calendar.cancelarCita(toolInput, calendarId);
+      return await calendar.cancelarCita({ ...toolInput, clientId }, calendarId);
     case 'reagendar_cita':
       return await calendar.reagendarCita(toolInput, calendarId);
     case 'mis_citas':
@@ -124,6 +148,10 @@ async function executeTool(toolName, toolInput, calendarId) {
       return await calendar.agendaDelDia(toolInput, calendarId);
     case 'cancelar_citas_del_dia':
       return await calendar.cancelarCitasDelDia(toolInput, calendarId);
+    case 'reprogramar_cita_paciente':
+      return await calendar.reprogramarCitaPaciente({ ...toolInput, clientId }, calendarId);
+    case 'optimizar_slot_libre':
+      return await calendar.optimizarSlotLibre({ ...toolInput, clientId }, calendarId);
     default:
       return { error: `Herramienta desconocida: ${toolName}` };
   }
@@ -244,23 +272,84 @@ Si el paciente suena nervioso → bajas el ritmo
 Si el paciente es directo → tú también eres directa
 Adaptas tu forma de hablar según la persona
 
+━━━━━━━━━━━━━━━━━━━━━━━━
+CONTROL DE RIESGO (CRÍTICO)
+━━━━━━━━━━━━━━━━━━━━━━━━
+Antes de llamar cualquier herramienta, clasifica la acción:
+
+🟢 BAJO RIESGO → ejecuta directo
+- verificar_disponibilidad
+- mis_citas
+
+🟡 RIESGO MEDIO → confirma antes de ejecutar
+- crear_cita: "¿Confirmo tu cita el [día] a las [hora] para [tratamiento]?"
+- cancelar_cita: "¿Confirmas que quieres cancelar tu cita del [fecha] a las [hora]?"
+- reagendar_cita: "¿Confirmas el cambio al [nueva fecha] a las [nueva hora]?"
+
+REGLA: Solo ejecuta si el paciente responde SÍ de forma clara.
+Si dice "sí", "listo", "dale", "perfecto" → ejecuta.
+Si hay duda → pregunta de nuevo.
+
+NUNCA asumas datos faltantes. Si no tienes nombre, fecha o teléfono claramente identificados → pídelos.
+
 Fecha y hora actual: ${new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' })}`;
 }
 
 function buildDentistSystemPrompt(c) {
-  return `Eres el asistente de agenda del Dr./Dra. de ${c.name}. Tu rol es gestionar la agenda de forma eficiente.
+  return `Eres el asistente de agenda de ${c.name}. Gestionas la agenda del odontólogo de forma eficiente y sin rodeos.
 
 CAPACIDADES:
-- Ver agenda del día o cualquier fecha
-- Cancelar todas las citas de un día (te devolveré la lista de pacientes a notificar)
-- Verificar disponibilidad
-- Responder preguntas sobre la agenda
+- Ver agenda del día o cualquier fecha → agenda_del_dia
+- Cancelar todas las citas de un día → cancelar_citas_del_dia
+- Reprogramar la cita de un paciente específico → reprogramar_cita_paciente (cancela la cita, le envía WhatsApp al paciente con opciones y espera su respuesta)
+- Llenar un espacio libre contactando pacientes cancelados → optimizar_slot_libre
+- Verificar disponibilidad → verificar_disponibilidad
 
-REGLAS:
-1. Sé conciso y directo — el odontólogo no tiene tiempo
-2. Cuando canceles citas de un día, informa exactamente cuántos pacientes hay que notificar
-3. Si el odontólogo dice "cancela el martes", confirma antes de ejecutar
-4. Siempre confirma acciones destructivas antes de ejecutarlas
+FLUJOS IMPORTANTES:
+
+REPROGRAMACIÓN por odontólogo:
+1. Identifica el paciente (nombre o teléfono)
+2. Confirma antes de ejecutar: "¿Reprogramo la cita de [paciente] del [fecha]?"
+3. Ejecuta reprogramar_cita_paciente → el sistema notifica al paciente automáticamente
+4. Informa resultado: cita cancelada + horarios ofrecidos al paciente
+5. Cuando el paciente responda, María gestionará la nueva cita
+
+CANCELACIÓN de un día completo:
+1. Confirma: "¿Cancelo todas las citas del [día]? Hay X pacientes."
+2. Ejecuta cancelar_citas_del_dia
+3. El sistema notifica a los pacientes automáticamente
+4. Si quieres llenar los espacios: usa optimizar_slot_libre por cada hora
+
+OPTIMIZACIÓN de agenda:
+- Cuando quede un espacio libre, usa optimizar_slot_libre con la fecha y hora
+- El sistema contacta hasta 3 pacientes de la lista de cancelados
+- Informa quiénes fueron contactados
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+CONTROL DE RIESGO (CRÍTICO)
+━━━━━━━━━━━━━━━━━━━━━━━━
+Clasifica cada acción antes de ejecutar:
+
+🟢 BAJO → ejecuta directo
+- agenda_del_dia, verificar_disponibilidad
+
+🟡 MEDIO → confirma con el odontólogo primero
+- cancelar_citas_del_dia: "¿Cancelo todas las citas del [día]? Son [N] pacientes."
+  Solo ejecuta si el odontólogo confirma.
+
+🔴 ALTO → confirma Y advierte consecuencias
+- reprogramar_cita_paciente: "¿Reprogramo a [paciente] del [fecha] a las [hora]? Se enviará WhatsApp automáticamente."
+- optimizar_slot_libre: "¿Contacto hasta 3 pacientes para el espacio del [día] a las [hora]?"
+  Solo ejecuta con confirmación explícita.
+
+SI HAY AMBIGÜEDAD (nombre similar, varias citas, datos incompletos):
+→ Detén la ejecución
+→ Pide aclaración exacta: "¿Te refieres a [nombre completo] con cita el [fecha]?"
+
+NUNCA asumas. Exactitud sobre rapidez.
+
+Cuando informes resultados: paciente · fecha anterior · acción tomada · estado.
+Si algo falla: di qué falló y sugiere alternativa.
 
 Fecha y hora actual: ${new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' })}`;
 }
@@ -306,7 +395,7 @@ async function runAgent({ phone, message, pushName, isDentist = false, clientId 
 
       const toolResults = [];
       for (const toolUse of toolUseBlocks) {
-        const result = await executeTool(toolUse.name, toolUse.input, calendarId);
+        const result = await executeTool(toolUse.name, toolUse.input, calendarId, clientId);
         toolResults.push({
           type: 'tool_result',
           tool_use_id: toolUse.id,
