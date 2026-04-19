@@ -6,13 +6,25 @@ async function downloadAudioFromEvolution({ audio, instanceName }) {
 
   if (!base || !apiKey) throw new Error('EVOLUTION_API_URL o EVOLUTION_API_KEY no configurados');
 
-  const res = await axios.post(
-    `${base}/chat/getBase64FromMediaMessage/${instanceName}`,
-    { message: { key: audio.key, message: audio.message } },
-    { headers: { apikey: apiKey, 'content-type': 'application/json' } }
-  );
+  const encodedInstance = encodeURIComponent(instanceName);
+  const url = `${base}/chat/getBase64FromMediaMessage/${encodedInstance}`;
+  const body = { message: { key: audio.key, message: audio.message } };
 
-  if (!res.data?.base64) throw new Error('Evolution API no retornó base64');
+  console.log(`[transcription] Descargando audio — instancia: ${instanceName}, url: ${url}`);
+
+  let res;
+  try {
+    res = await axios.post(url, body, {
+      headers: { apikey: apiKey, 'content-type': 'application/json' },
+    });
+  } catch (err) {
+    const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
+    throw new Error(`Evolution API falló (${err.response?.status || 'sin respuesta'}): ${detail}`);
+  }
+
+  if (!res.data?.base64) {
+    throw new Error(`Evolution API no retornó base64. Respuesta: ${JSON.stringify(res.data)}`);
+  }
 
   return {
     base64: res.data.base64,
