@@ -144,15 +144,19 @@ async function verificarDisponibilidad({ fecha, duracion_minutos = 60 }, calenda
 
 async function crearCita({ datetime, tratamiento, nombre_paciente, telefono_paciente, notas = '' }, calendarId) {
   calendarId = calendarId || config.google.calendarId;
+  console.log(`[crearCita] calendarId=${calendarId} datetime=${datetime} paciente=${nombre_paciente}`);
   try {
     const start = parseDatetime(datetime);
+    console.log(`[crearCita] start parseado: ${start.toISOString()} (Colombia: ${formatHora(start)} ${formatFecha(start)})`);
 
     const validacion = validarHorarioLaboral(start);
     if (!validacion.valido) {
+      console.warn(`[crearCita] Horario inválido: ${validacion.motivo}`);
       return { success: false, error: `Horario no válido: ${validacion.motivo}` };
     }
 
     if (start <= new Date()) {
+      console.warn(`[crearCita] Fecha en el pasado: ${start.toISOString()}`);
       return { success: false, error: 'No se pueden crear citas en el pasado.' };
     }
 
@@ -169,6 +173,7 @@ async function crearCita({ datetime, tratamiento, nombre_paciente, telefono_paci
       },
     });
 
+    console.log(`[crearCita] ✅ Evento creado: ${event.data.id}`);
     return {
       success: true,
       eventId: event.data.id,
