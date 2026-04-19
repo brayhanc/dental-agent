@@ -3,6 +3,7 @@ const express = require('express');
 const { enviarMensaje } = require('./src/tools/whatsapp');
 const { setClinicConfig, getClinicConfig } = require('./src/memory');
 const config = require('./src/config');
+const { iniciarRecordatorios, procesarRecordatorios } = require('./src/jobs/reminders');
 
 const { handleText } = require('./src/handlers/text');
 const { handleAudio } = require('./src/handlers/audio');
@@ -98,9 +99,16 @@ app.get('/clinic-config/:client_id', async (req, res) => {
   res.json({ client_id, config: cfg || 'usando config por defecto (.env)' });
 });
 
+// Endpoint para disparar recordatorios manualmente (pruebas)
+app.post('/send-reminders', async (req, res) => {
+  res.json({ status: 'processing' });
+  await procesarRecordatorios();
+});
+
 const PORT = config.server.port;
 app.listen(PORT, () => {
   console.log(`🦷 Dental Agent corriendo en puerto ${PORT}`);
   console.log(`📋 Clínica: ${config.clinic.name}`);
   console.log(`🤖 Modelo: ${config.anthropic.model}`);
+  iniciarRecordatorios();
 });

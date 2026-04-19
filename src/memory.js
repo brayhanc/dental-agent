@@ -88,4 +88,6 @@ async function getCancelledPatients(clientId, limit = 5) {
   return items.map(i => JSON.parse(i));
 }
 
-module.exports = { saveMessage, getHistory, clearHistory, isHumanActive, getClinicConfig, setClinicConfig, addCancelledPatient, getCancelledPatients, savePendingAction, getPendingAction, clearPendingAction };
+async function getRedisClient() { return getClient(); }
+
+module.exports = { saveMessage, getHistory, clearHistory, isHumanActive, getClinicConfig, setClinicConfig, addCancelledPatient, getCancelledPatients, savePendingAction, getPendingAction, clearPendingAction, getRedisClient };
