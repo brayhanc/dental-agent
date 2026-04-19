@@ -113,15 +113,15 @@ const DENTIST_TOOLS = [
   },
   {
     name: 'reprogramar_cita_paciente',
-    description: 'Reprograma la cita de un paciente. ANTES de llamar este tool, pregunta al odontólogo: "¿Quieres reagendar para el mismo día u otro día?" y usa su respuesta en mismo_dia.',
+    description: 'Reprograma la cita de un paciente. Pregunta al odontólogo "¿mismo día u otro día?" antes de llamar. Usa mismo_dia:true si quiere el mismo día, mismo_dia:false (default) para otro día.',
     input_schema: {
       type: 'object',
       properties: {
         telefono_paciente: { type: 'string', description: 'Teléfono del paciente sin +' },
         motivo: { type: 'string', description: 'Motivo del cambio para informar al paciente' },
-        mismo_dia: { type: 'boolean', description: 'true si el odontólogo quiere reagendar el mismo día, false si prefiere otro día' },
+        mismo_dia: { type: 'boolean', description: 'true = reagendar mismo día, false = otro día diferente (default)' },
       },
-      required: ['telefono_paciente', 'mismo_dia'],
+      required: ['telefono_paciente'],
     },
   },
   {
