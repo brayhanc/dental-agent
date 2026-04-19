@@ -143,7 +143,7 @@ async function executeTool(toolName, toolInput, calendarId, clientId = 'default'
     case 'verificar_disponibilidad':
       return await calendar.verificarDisponibilidad(toolInput, calendarId);
     case 'crear_cita':
-      return await calendar.crearCita(toolInput, calendarId);
+      return await calendar.crearCita({ ...toolInput, clientId, phone }, calendarId);
     case 'cancelar_cita':
       return await calendar.cancelarCita({ ...toolInput, clientId, phone }, calendarId);
     case 'reagendar_cita':

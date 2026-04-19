@@ -142,9 +142,9 @@ async function verificarDisponibilidad({ fecha, duracion_minutos = 60 }, calenda
   }
 }
 
-async function crearCita({ datetime, tratamiento, nombre_paciente, telefono_paciente, notas = '' }, calendarId) {
+async function crearCita({ datetime, tratamiento, nombre_paciente, telefono_paciente, notas = '', clientId = 'default', phone = null, confirmed = false }, calendarId) {
   calendarId = calendarId || config.google.calendarId;
-  console.log(`[crearCita] calendarId=${calendarId} datetime=${datetime} paciente=${nombre_paciente}`);
+  console.log(`[crearCita] calendarId=${calendarId} datetime=${datetime} paciente=${nombre_paciente} confirmed=${confirmed}`);
   try {
     const start = parseDatetime(datetime);
     console.log(`[crearCita] start parseado: ${start.toISOString()} (Colombia: ${formatHora(start)} ${formatFecha(start)})`);
@@ -158,6 +158,21 @@ async function crearCita({ datetime, tratamiento, nombre_paciente, telefono_paci
     if (start <= new Date()) {
       console.warn(`[crearCita] Fecha en el pasado: ${start.toISOString()}`);
       return { success: false, error: 'No se pueden crear citas en el pasado.' };
+    }
+
+    const resumen = `${formatFecha(start)} a las ${formatHora(start)} — ${tratamiento} para ${nombre_paciente}`;
+
+    if (!confirmed && phone) {
+      await memory.savePendingAction(clientId, phone, {
+        tool: 'crear_cita',
+        params: { datetime, tratamiento, nombre_paciente, telefono_paciente, notas, clientId, phone, confirmed: true },
+        descripcion: resumen,
+      });
+      return {
+        requires_confirmation: true,
+        propuesta: resumen,
+        instruccion: `Pregunta al paciente: "¿Confirmo tu cita el ${resumen}?"`,
+      };
     }
 
     const calendar = getCalendarClient();
