@@ -8,7 +8,20 @@ async function downloadAudioFromEvolution({ audio, instanceName }) {
 
   const encodedInstance = encodeURIComponent(instanceName);
   const url = `${base}/chat/getBase64FromMediaMessage/${encodedInstance}`;
-  const body = { message: { key: audio.key, message: audio.message } };
+
+  // Solo los campos esenciales — Evolution API rechaza campos extra como addressingMode, messageContextInfo
+  const body = {
+    message: {
+      key: {
+        remoteJid: audio.key.remoteJid,
+        fromMe: audio.key.fromMe,
+        id: audio.key.id,
+      },
+      message: {
+        audioMessage: audio.message.audioMessage,
+      },
+    },
+  };
 
   console.log(`[transcription] Descargando audio — instancia: ${instanceName}, url: ${url}`);
 
