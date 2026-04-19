@@ -1,48 +1,59 @@
 require('dotenv').config();
 const express = require('express');
-const { runAgent } = require('./src/agent');
 const { enviarMensaje } = require('./src/tools/whatsapp');
 const { setClinicConfig, getClinicConfig } = require('./src/memory');
 const config = require('./src/config');
 
+const { handleText } = require('./src/handlers/text');
+const { handleAudio } = require('./src/handlers/audio');
+
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
+
+const MESSAGE_HANDLERS = {
+  text: handleText,
+  audio: handleAudio,
+};
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', service: 'dental-agent', timestamp: new Date().toISOString() });
 });
 
-// Endpoint principal — llamado desde n8n WF1
+// Endpoint principal — recibe payload estandarizado { type, content, phone, ... }
 app.post('/message', async (req, res) => {
-  const { phone, message, push_name, instance, client_id } = req.body;
+  const { phone, push_name, instance, client_id, type, content } = req.body;
 
-  if (!phone || !message) {
-    return res.status(400).json({ error: 'phone y message son requeridos' });
+  if (!phone || !type || !content) {
+    return res.status(400).json({ success: false, error: 'phone, type y content son requeridos' });
   }
 
-  res.json({ status: 'processing', phone });
+  const handler = MESSAGE_HANDLERS[type];
+  if (!handler) {
+    return res.status(400).json({ success: false, error: `Tipo no soportado: ${type}` });
+  }
+
+  res.json({ status: 'processing', phone, type });
+
+  const clientId = client_id || instance || 'default';
+  const isDentist = config.clinic.staffPhone && phone === config.clinic.staffPhone;
+
+  console.log(`[${new Date().toISOString()}] [${clientId}] ${type.toUpperCase()} de ${push_name || phone}`);
 
   try {
-    const clientId = client_id || instance || 'default';
-    const staffPhone = config.clinic.staffPhone;
-    const isDentist = staffPhone && phone === staffPhone;
+    const result = await handler({ phone, content, pushName: push_name, isDentist, clientId });
 
-    console.log(`[${new Date().toISOString()}] [${clientId}] Mensaje de ${push_name || phone} (${isDentist ? 'odontólogo' : 'paciente'}): ${message.substring(0, 50)}...`);
+    if (result.reply) {
+      await enviarMensaje(phone, result.reply);
+    }
 
-    const { response } = await runAgent({
-      phone,
-      message,
-      pushName: push_name,
-      isDentist,
-      clientId,
-    });
-
-    await enviarMensaje(phone, response);
-    console.log(`[${new Date().toISOString()}] [${clientId}] Respuesta enviada a ${phone}`);
-
+    if (!result.success) {
+      console.warn(`[${clientId}] Handler '${type}' success:false — ${result.error}`);
+    } else {
+      console.log(`[${new Date().toISOString()}] [${clientId}] Respuesta enviada (${type})`);
+    }
   } catch (error) {
-    console.error('Error procesando mensaje:', error);
-    await enviarMensaje(phone, 'Disculpa, tuve un problema técnico. Por favor intenta de nuevo en un momento. 🙏');
+    console.error(`[${clientId}] Error en handler '${type}':`, error.message);
+    await enviarMensaje(phone, 'Disculpa, tuve un problema técnico. Por favor intenta de nuevo. 🙏');
   }
 });
 
