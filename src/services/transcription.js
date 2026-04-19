@@ -74,7 +74,7 @@ async function transcribeAudio({ audioBase64, mimeType = 'audio/ogg' }) {
   try {
     transcriptRes = await axios.post(
       'https://api.assemblyai.com/v2/transcript',
-      { audio_url: uploadUrl, speech_model: 'universal-2' },
+      { audio_url: uploadUrl, speech_models: ['universal-2'] },
       { headers: { ...authHeaders, 'content-type': 'application/json' } }
     );
   } catch (err) {
