@@ -300,6 +300,9 @@ async function reprogramarCitaPaciente({ telefono_paciente, motivo = 'un ajuste 
 
     await enviarMensaje(telefono_paciente, mensaje);
 
+    // Guardar el mensaje en el historial del paciente para que María tenga contexto cuando responda
+    await memory.saveMessage(clientId, telefono_paciente, 'assistant', mensaje);
+
     return {
       success: true,
       cita_cancelada: citaInfo,
