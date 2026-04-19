@@ -421,7 +421,7 @@ async function runAgent({ phone, message, pushName, isDentist = false, clientId 
     response = await client.messages.create({
       model: config.anthropic.model,
       max_tokens: 1024,
-      system: systemPrompt,
+      system: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
       tools,
       messages,
     });

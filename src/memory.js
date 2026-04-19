@@ -17,7 +17,7 @@ async function saveMessage(clientId, phone, role, content) {
   const key = `chat:${clientId}:${phone}`;
   const message = JSON.stringify({ role, content, timestamp: Date.now() });
   await redis.rPush(key, message);
-  await redis.lTrim(key, -20, -1);
+  await redis.lTrim(key, -10, -1);
   await redis.expire(key, 60 * 60 * 24 * 7);
 }
 
