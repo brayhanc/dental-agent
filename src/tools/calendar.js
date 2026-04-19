@@ -1,6 +1,8 @@
 const { google } = require('googleapis');
 const config = require('../config');
 
+const TZ = 'America/Bogota';
+
 function getCalendarClient() {
   const auth = new google.auth.JWT({
     email: config.google.credentials.client_email,
@@ -10,57 +12,113 @@ function getCalendarClient() {
   return google.calendar({ version: 'v3', auth });
 }
 
+// Obtiene componentes de fecha en hora colombiana
+function coTime(date = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: TZ,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(date);
+  const get = (type) => parseInt(parts.find(p => p.type === type).value);
+  const year = get('year'), month = get('month'), day = get('day');
+  return {
+    year, month, day,
+    hour: get('hour'),
+    minute: get('minute'),
+    dayOfWeek: new Date(`${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}T12:00:00-05:00`).getDay(),
+  };
+}
+
+// Crea un Date a partir de componentes en hora colombiana
+function coDate(year, month, day, hour = 0, minute = 0) {
+  return new Date(`${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}T${String(hour).padStart(2,'0')}:${String(minute).padStart(2,'0')}:00-05:00`);
+}
+
+// Avanza al día siguiente en hora colombiana
+function nextDay(date) {
+  const { year, month, day } = coTime(date);
+  return coDate(year, month, day + 1, 0, 0);
+}
+
+function formatFecha(date) {
+  return date.toLocaleDateString('es-CO', { timeZone: TZ, weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+}
+
+function formatHora(date) {
+  return date.toLocaleTimeString('es-CO', { timeZone: TZ, hour: '2-digit', minute: '2-digit' });
+}
+
+// Valida que un datetime esté dentro del horario laboral (Colombia)
+function validarHorarioLaboral(date) {
+  const { hour, dayOfWeek } = coTime(date);
+  if (dayOfWeek === 0) return { valido: false, motivo: 'Los domingos no hay atención.' };
+  const maxHour = dayOfWeek === 6 ? 14 : 18;
+  if (hour < 8 || hour >= maxHour) {
+    const horario = dayOfWeek === 6 ? '8am a 2pm' : '8am a 6pm';
+    return { valido: false, motivo: `El horario de atención es de ${horario}.` };
+  }
+  return { valido: true };
+}
+
 async function verificarDisponibilidad({ fecha, duracion_minutos = 60 }, calendarId) {
   calendarId = calendarId || config.google.calendarId;
   try {
     const calendar = getCalendarClient();
-    const start = fecha ? new Date(fecha) : new Date();
-    start.setHours(8, 0, 0, 0);
-    const end = new Date(start);
-    end.setDate(end.getDate() + 7);
-    end.setHours(18, 0, 0, 0);
+    const now = new Date();
+
+    // Punto de inicio: hoy o la fecha solicitada, desde medianoche Colombia
+    let startBase;
+    if (fecha) {
+      const [y, m, d] = fecha.split('-').map(Number);
+      startBase = coDate(y, m, d, 0, 0);
+    } else {
+      const co = coTime(now);
+      startBase = coDate(co.year, co.month, co.day, 0, 0);
+    }
+
+    const timeMax = new Date(startBase.getTime() + 8 * 24 * 60 * 60 * 1000);
 
     const response = await calendar.events.list({
       calendarId,
-      timeMin: start.toISOString(),
-      timeMax: end.toISOString(),
+      timeMin: startBase.toISOString(),
+      timeMax: timeMax.toISOString(),
       singleEvents: true,
       orderBy: 'startTime',
     });
 
-    const events = response.data.items || [];
-    const busySlots = events.map(e => ({
+    const busySlots = (response.data.items || []).map(e => ({
       start: new Date(e.start.dateTime || e.start.date),
       end: new Date(e.end.dateTime || e.end.date),
     }));
 
     const slots = [];
-    const checkDate = new Date(start);
+    let checkDate = startBase;
 
-    while (checkDate < end && slots.length < 10) {
-      const dayOfWeek = checkDate.getDay();
+    while (checkDate < timeMax && slots.length < 10) {
+      const co = coTime(checkDate);
+      const { dayOfWeek } = co;
+
       if (dayOfWeek !== 0) {
         const maxHour = dayOfWeek === 6 ? 14 : 18;
         for (let hour = 8; hour < maxHour; hour++) {
-          const slotStart = new Date(checkDate);
-          slotStart.setHours(hour, 0, 0, 0);
-          const slotEnd = new Date(slotStart);
-          slotEnd.setMinutes(slotEnd.getMinutes() + duracion_minutos);
+          const slotStart = coDate(co.year, co.month, co.day, hour, 0);
+          const slotEnd = new Date(slotStart.getTime() + duracion_minutos * 60000);
+
+          if (slotStart <= now) continue;
 
           const isBusy = busySlots.some(b => slotStart < b.end && slotEnd > b.start);
-
-          if (!isBusy && slotStart > new Date()) {
+          if (!isBusy) {
             slots.push({
-              fecha: slotStart.toLocaleDateString('es-CO', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }),
-              hora: slotStart.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' }),
+              fecha: formatFecha(slotStart),
+              hora: formatHora(slotStart),
               datetime: slotStart.toISOString(),
             });
             if (slots.length >= 5) break;
           }
         }
       }
-      checkDate.setDate(checkDate.getDate() + 1);
-      checkDate.setHours(8, 0, 0, 0);
+
+      checkDate = nextDay(checkDate);
     }
 
     return { disponible: slots.length > 0, slots };
@@ -73,26 +131,35 @@ async function verificarDisponibilidad({ fecha, duracion_minutos = 60 }, calenda
 async function crearCita({ datetime, tratamiento, nombre_paciente, telefono_paciente, notas = '' }, calendarId) {
   calendarId = calendarId || config.google.calendarId;
   try {
-    const calendar = getCalendarClient();
     const start = new Date(datetime);
-    const end = new Date(start);
-    end.setHours(end.getHours() + 1);
+
+    const validacion = validarHorarioLaboral(start);
+    if (!validacion.valido) {
+      return { success: false, error: `Horario no válido: ${validacion.motivo}` };
+    }
+
+    if (start <= new Date()) {
+      return { success: false, error: 'No se pueden crear citas en el pasado.' };
+    }
+
+    const calendar = getCalendarClient();
+    const end = new Date(start.getTime() + 60 * 60 * 1000);
 
     const event = await calendar.events.insert({
       calendarId,
       resource: {
         summary: `${tratamiento} - ${nombre_paciente}`,
         description: `Paciente: ${nombre_paciente}\ntel:${telefono_paciente}\n${notas}`,
-        start: { dateTime: start.toISOString(), timeZone: 'America/Bogota' },
-        end: { dateTime: end.toISOString(), timeZone: 'America/Bogota' },
+        start: { dateTime: start.toISOString(), timeZone: TZ },
+        end: { dateTime: end.toISOString(), timeZone: TZ },
       },
     });
 
     return {
       success: true,
       eventId: event.data.id,
-      fecha: start.toLocaleDateString('es-CO', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }),
-      hora: start.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' }),
+      fecha: formatFecha(start),
+      hora: formatHora(start),
       confirmacion: `Cita #${event.data.id.slice(-6).toUpperCase()}`,
     };
   } catch (error) {
@@ -106,8 +173,7 @@ async function cancelarCita({ telefono_paciente, fecha = null }, calendarId) {
   try {
     const calendar = getCalendarClient();
     const now = new Date();
-    const timeMax = new Date();
-    timeMax.setDate(timeMax.getDate() + 60);
+    const timeMax = new Date(now.getTime() + 60 * 24 * 60 * 60 * 1000);
 
     const response = await calendar.events.list({
       calendarId,
@@ -127,7 +193,7 @@ async function cancelarCita({ telefono_paciente, fecha = null }, calendarId) {
 
     return {
       success: true,
-      message: `Cita cancelada: ${cita.summary} del ${new Date(cita.start.dateTime).toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long' })}`,
+      message: `Cita cancelada: ${cita.summary} del ${formatFecha(new Date(cita.start.dateTime))}`,
     };
   } catch (error) {
     console.error('Error cancelarCita:', error.message);
@@ -138,10 +204,16 @@ async function cancelarCita({ telefono_paciente, fecha = null }, calendarId) {
 async function reagendarCita({ telefono_paciente, nuevo_datetime }, calendarId) {
   calendarId = calendarId || config.google.calendarId;
   try {
+    const newStart = new Date(nuevo_datetime);
+
+    const validacion = validarHorarioLaboral(newStart);
+    if (!validacion.valido) {
+      return { success: false, error: `Horario no válido: ${validacion.motivo}` };
+    }
+
     const calendar = getCalendarClient();
     const now = new Date();
-    const timeMax = new Date();
-    timeMax.setDate(timeMax.getDate() + 60);
+    const timeMax = new Date(now.getTime() + 60 * 24 * 60 * 60 * 1000);
 
     const response = await calendar.events.list({
       calendarId,
@@ -152,28 +224,24 @@ async function reagendarCita({ telefono_paciente, nuevo_datetime }, calendarId) 
       q: telefono_paciente,
     });
 
-    const events = response.data.items || [];
-    const cita = events[0];
-
+    const cita = (response.data.items || [])[0];
     if (!cita) return { success: false, message: 'No encontré citas próximas para reagendar.' };
 
-    const newStart = new Date(nuevo_datetime);
-    const newEnd = new Date(newStart);
-    newEnd.setHours(newEnd.getHours() + 1);
+    const newEnd = new Date(newStart.getTime() + 60 * 60 * 1000);
 
     await calendar.events.update({
       calendarId,
       eventId: cita.id,
       resource: {
         ...cita,
-        start: { dateTime: newStart.toISOString(), timeZone: 'America/Bogota' },
-        end: { dateTime: newEnd.toISOString(), timeZone: 'America/Bogota' },
+        start: { dateTime: newStart.toISOString(), timeZone: TZ },
+        end: { dateTime: newEnd.toISOString(), timeZone: TZ },
       },
     });
 
     return {
       success: true,
-      message: `Cita reagendada para el ${newStart.toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long' })} a las ${newStart.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}`,
+      message: `Cita reagendada para el ${formatFecha(newStart)} a las ${formatHora(newStart)}`,
     };
   } catch (error) {
     console.error('Error reagendarCita:', error.message);
@@ -186,8 +254,7 @@ async function misCitas({ telefono_paciente }, calendarId) {
   try {
     const calendar = getCalendarClient();
     const now = new Date();
-    const timeMax = new Date();
-    timeMax.setDate(timeMax.getDate() + 60);
+    const timeMax = new Date(now.getTime() + 60 * 24 * 60 * 60 * 1000);
 
     const response = await calendar.events.list({
       calendarId,
@@ -203,8 +270,8 @@ async function misCitas({ telefono_paciente }, calendarId) {
 
     const citas = events.map(e => ({
       tratamiento: e.summary,
-      fecha: new Date(e.start.dateTime).toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long' }),
-      hora: new Date(e.start.dateTime).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' }),
+      fecha: formatFecha(new Date(e.start.dateTime)),
+      hora: formatHora(new Date(e.start.dateTime)),
     }));
 
     return { citas };
@@ -218,14 +285,20 @@ async function agendaDelDia({ fecha = null }, calendarId) {
   calendarId = calendarId || config.google.calendarId;
   try {
     const calendar = getCalendarClient();
-    const day = fecha ? new Date(fecha) : new Date();
-    day.setHours(0, 0, 0, 0);
-    const dayEnd = new Date(day);
-    dayEnd.setHours(23, 59, 59, 0);
+    let dayStart, dayEnd;
+
+    if (fecha) {
+      const [y, m, d] = fecha.split('-').map(Number);
+      dayStart = coDate(y, m, d, 0, 0);
+    } else {
+      const co = coTime();
+      dayStart = coDate(co.year, co.month, co.day, 0, 0);
+    }
+    dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000 - 1000);
 
     const response = await calendar.events.list({
       calendarId,
-      timeMin: day.toISOString(),
+      timeMin: dayStart.toISOString(),
       timeMax: dayEnd.toISOString(),
       singleEvents: true,
       orderBy: 'startTime',
@@ -233,16 +306,12 @@ async function agendaDelDia({ fecha = null }, calendarId) {
 
     const events = response.data.items || [];
     const citas = events.map(e => ({
-      hora: new Date(e.start.dateTime).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' }),
+      hora: formatHora(new Date(e.start.dateTime)),
       paciente: e.summary,
       descripcion: e.description || '',
     }));
 
-    return {
-      fecha: day.toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long' }),
-      total: citas.length,
-      citas,
-    };
+    return { fecha: formatFecha(dayStart), total: citas.length, citas };
   } catch (error) {
     console.error('Error agendaDelDia:', error.message);
     return { total: 0, citas: [], error: error.message };
@@ -253,14 +322,13 @@ async function cancelarCitasDelDia({ fecha, motivo = 'inconveniente en la agenda
   calendarId = calendarId || config.google.calendarId;
   try {
     const calendar = getCalendarClient();
-    const day = new Date(fecha);
-    day.setHours(0, 0, 0, 0);
-    const dayEnd = new Date(day);
-    dayEnd.setHours(23, 59, 59, 0);
+    const [y, m, d] = fecha.split('-').map(Number);
+    const dayStart = coDate(y, m, d, 0, 0);
+    const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000 - 1000);
 
     const response = await calendar.events.list({
       calendarId,
-      timeMin: day.toISOString(),
+      timeMin: dayStart.toISOString(),
       timeMax: dayEnd.toISOString(),
       singleEvents: true,
     });
@@ -274,7 +342,7 @@ async function cancelarCitasDelDia({ fecha, motivo = 'inconveniente en la agenda
         pacientes.push({
           telefono: telMatch[1],
           nombre: event.summary,
-          hora: new Date(event.start.dateTime).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' }),
+          hora: formatHora(new Date(event.start.dateTime)),
         });
       }
       await calendar.events.delete({ calendarId, eventId: event.id });
@@ -284,7 +352,7 @@ async function cancelarCitasDelDia({ fecha, motivo = 'inconveniente en la agenda
       success: true,
       canceladas: events.length,
       pacientes_a_notificar: pacientes,
-      fecha: day.toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long' }),
+      fecha: formatFecha(dayStart),
       motivo,
     };
   } catch (error) {
