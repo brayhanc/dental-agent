@@ -113,14 +113,15 @@ const DENTIST_TOOLS = [
   },
   {
     name: 'reprogramar_cita_paciente',
-    description: 'Reprograma la cita de un paciente: cancela la cita actual, le envía WhatsApp con horarios disponibles y espera su confirmación.',
+    description: 'Reprograma la cita de un paciente. ANTES de llamar este tool, pregunta al odontólogo: "¿Quieres reagendar para el mismo día u otro día?" y usa su respuesta en mismo_dia.',
     input_schema: {
       type: 'object',
       properties: {
         telefono_paciente: { type: 'string', description: 'Teléfono del paciente sin +' },
         motivo: { type: 'string', description: 'Motivo del cambio para informar al paciente' },
+        mismo_dia: { type: 'boolean', description: 'true si el odontólogo quiere reagendar el mismo día, false si prefiere otro día' },
       },
-      required: ['telefono_paciente'],
+      required: ['telefono_paciente', 'mismo_dia'],
     },
   },
   {

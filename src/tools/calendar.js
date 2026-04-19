@@ -178,6 +178,17 @@ async function crearCita({ datetime, tratamiento, nombre_paciente, telefono_paci
     const calendar = getCalendarClient();
     const end = new Date(start.getTime() + 60 * 60 * 1000);
 
+    // Verificar que el slot no esté ya ocupado
+    const conflicto = await calendar.events.list({
+      calendarId,
+      timeMin: start.toISOString(),
+      timeMax: end.toISOString(),
+      singleEvents: true,
+    });
+    if ((conflicto.data.items || []).length > 0) {
+      return { success: false, error: 'Ese horario ya está ocupado. Usa verificar_disponibilidad para ver horarios libres.' };
+    }
+
     const event = await calendar.events.insert({
       calendarId,
       resource: {
@@ -267,7 +278,7 @@ async function cancelarCita({ telefono_paciente, fecha = null, clientId = 'defau
   }
 }
 
-async function reprogramarCitaPaciente({ telefono_paciente, motivo = 'un ajuste en la agenda', clientId = 'default' }, calendarId) {
+async function reprogramarCitaPaciente({ telefono_paciente, motivo = 'un ajuste en la agenda', mismo_dia = false, clientId = 'default' }, calendarId) {
   calendarId = calendarId || config.google.calendarId;
   try {
     const calendar = getCalendarClient();
@@ -287,15 +298,31 @@ async function reprogramarCitaPaciente({ telefono_paciente, motivo = 'un ajuste 
     const cita = events[0];
     if (!cita) return { success: false, message: 'No encontré cita para ese paciente.' };
 
+    const citaStart = new Date(cita.start.dateTime);
     const citaInfo = {
       summary: cita.summary,
-      fecha: formatFecha(new Date(cita.start.dateTime)),
-      hora: formatHora(new Date(cita.start.dateTime)),
+      fecha: formatFecha(citaStart),
+      hora: formatHora(citaStart),
     };
 
-    // Obtener horarios disponibles para ofrecer al paciente
-    const slotsResult = await verificarDisponibilidad({ duracion_minutos: 60 }, calendarId);
-    const opciones = slotsResult.slots.slice(0, 3);
+    // Obtener horarios disponibles según preferencia del odontólogo
+    const citaCo = coTime(citaStart);
+    const fechaBusqueda = mismo_dia ? `${citaCo.year}-${String(citaCo.month).padStart(2,'0')}-${String(citaCo.day).padStart(2,'0')}` : null;
+    const slotsResult = await verificarDisponibilidad({ fecha: fechaBusqueda, duracion_minutos: 60 }, calendarId);
+
+    // Si es mismo día, ofrece hasta 4 slots. Si es otro día, ofrece 1 por día (máx 3 días distintos)
+    let opciones;
+    if (mismo_dia) {
+      opciones = slotsResult.slots.slice(0, 4);
+    } else {
+      const diasVistos = new Set();
+      opciones = slotsResult.slots.filter(s => {
+        const dia = s.datetime.substring(0, 10);
+        if (diasVistos.has(dia)) return false;
+        diasVistos.add(dia);
+        return true;
+      }).slice(0, 3);
+    }
 
     // Cancelar la cita actual
     await calendar.events.delete({ calendarId, eventId: cita.id });
