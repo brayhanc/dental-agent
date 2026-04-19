@@ -39,7 +39,7 @@ async function handleAudio({ phone, content, pushName, isDentist, clientId }) {
 
   return {
     success: true,
-    reply: `🎙️ _"${transcribedText}"_\n\n${response}`,
+    reply: response,
     error: null,
     metadata: { type: 'audio', transcribedText, duration: audioDuration },
   };
