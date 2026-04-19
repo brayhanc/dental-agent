@@ -313,10 +313,8 @@ async function reprogramarCitaPaciente({ telefono_paciente, motivo = 'un ajuste 
       ? `Hola! Tu cita de *${cita.summary}* del ${citaInfo.fecha} a las ${citaInfo.hora} debe reprogramarse por ${motivo}.\n\nTe ofrecemos estos horarios:\n${opcionesTexto}\n\n¿Cuál te queda bien? 🙏`
       : `Hola! Tu cita de *${cita.summary}* del ${citaInfo.fecha} a las ${citaInfo.hora} debe reprogramarse por ${motivo}. Por favor escríbenos para coordinar un nuevo horario 🙏`;
 
-    await enviarMensaje(telefono_paciente, mensaje);
-
-    // Guardar en historial con número normalizado (con código de país) para que coincida con el webhook
     const telefonoNorm = telefono_paciente.startsWith('57') ? telefono_paciente : `57${telefono_paciente}`;
+    await enviarMensaje(telefonoNorm, mensaje);
     await memory.saveMessage(clientId, telefonoNorm, 'assistant', mensaje);
 
     return {
@@ -343,7 +341,8 @@ async function optimizarSlotLibre({ fecha, hora, clientId = 'default' }, calenda
     const resultados = [];
     for (const paciente of candidatos) {
       const mensaje = `Hola${paciente.nombre ? ` ${paciente.nombre.split(' ')[0]}` : ''}! Se liberó un espacio el ${fecha} a las ${hora}. ¿Te gustaría tomarlo? 😊`;
-      await enviarMensaje(paciente.telefono, mensaje);
+      const telNorm = paciente.telefono.startsWith('57') ? paciente.telefono : `57${paciente.telefono}`;
+      await enviarMensaje(telNorm, mensaje);
       resultados.push({ telefono: paciente.telefono, nombre: paciente.nombre, mensaje_enviado: true });
     }
 
