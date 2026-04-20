@@ -36,10 +36,9 @@ function coDate(year, month, day, hour = 0, minute = 0) {
   return new Date(`${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}T${String(hour).padStart(2,'0')}:${String(minute).padStart(2,'0')}:00-05:00`);
 }
 
-// Avanza al día siguiente en hora colombiana
+// Avanza al día siguiente (suma 24h — Colombia no tiene DST)
 function nextDay(date) {
-  const { year, month, day } = coTime(date);
-  return coDate(year, month, day + 1, 0, 0);
+  return new Date(date.getTime() + 24 * 60 * 60 * 1000);
 }
 
 // Parsea datetime — si no trae zona horaria, asume Colombia (UTC-5)
@@ -222,6 +221,7 @@ async function cancelarCita({ telefono_paciente, fecha = null, clientId = 'defau
     const cal = getCalendarClient();
     const now = new Date();
     const timeMax = new Date(now.getTime() + 60 * 24 * 60 * 60 * 1000);
+    const telBusqueda = telefono_paciente.replace(/^57/, '');
 
     const response = await cal.events.list({
       calendarId,
@@ -229,7 +229,7 @@ async function cancelarCita({ telefono_paciente, fecha = null, clientId = 'defau
       timeMax: timeMax.toISOString(),
       singleEvents: true,
       orderBy: 'startTime',
-      q: telefono_paciente,
+      q: telBusqueda,
     });
 
     const events = response.data.items || [];
@@ -288,13 +288,14 @@ async function reprogramarCitaPaciente({ telefono_paciente, motivo = 'un ajuste 
     const now = new Date();
     const timeMax = new Date(now.getTime() + 60 * 24 * 60 * 60 * 1000);
 
+    const telBusqueda = telefono_paciente.replace(/^57/, '');
     const response = await calendar.events.list({
       calendarId,
       timeMin: now.toISOString(),
       timeMax: timeMax.toISOString(),
       singleEvents: true,
       orderBy: 'startTime',
-      q: telefono_paciente,
+      q: telBusqueda,
     });
 
     const events = response.data.items || [];
@@ -379,7 +380,8 @@ async function optimizarSlotLibre({ fecha, hora, clientId = 'default' }, calenda
 
     const resultados = [];
     for (const paciente of candidatos) {
-      const mensaje = `Hola${paciente.nombre ? ` ${paciente.nombre.split(' ')[0]}` : ''}! Se liberó un espacio el ${fecha} a las ${hora}. ¿Te gustaría tomarlo? 😊`;
+      const nombrePaciente = paciente.nombre ? (paciente.nombre.split(' - ')[1] || paciente.nombre).split(' ')[0] : '';
+      const mensaje = `Hola${nombrePaciente ? ` ${nombrePaciente}` : ''}! Se liberó un espacio el ${fecha} a las ${hora}. ¿Te gustaría tomarlo? 😊`;
       const telNorm = paciente.telefono.startsWith('57') ? paciente.telefono : `57${paciente.telefono}`;
       await enviarMensaje(telNorm, mensaje);
       resultados.push({ telefono: paciente.telefono, nombre: paciente.nombre, mensaje_enviado: true });
@@ -410,6 +412,7 @@ async function reagendarCita({ telefono_paciente, nuevo_datetime, clientId = 'de
     const calendar = getCalendarClient();
     const now = new Date();
     const timeMax = new Date(now.getTime() + 60 * 24 * 60 * 60 * 1000);
+    const telBusqueda = telefono_paciente.replace(/^57/, '');
 
     const response = await calendar.events.list({
       calendarId,
@@ -417,7 +420,7 @@ async function reagendarCita({ telefono_paciente, nuevo_datetime, clientId = 'de
       timeMax: timeMax.toISOString(),
       singleEvents: true,
       orderBy: 'startTime',
-      q: telefono_paciente,
+      q: telBusqueda,
     });
 
     const cita = (response.data.items || [])[0];
@@ -479,13 +482,14 @@ async function misCitas({ telefono_paciente }, calendarId) {
     const now = new Date();
     const timeMax = new Date(now.getTime() + 60 * 24 * 60 * 60 * 1000);
 
+    const telBusqueda = telefono_paciente.replace(/^57/, '');
     const response = await calendar.events.list({
       calendarId,
       timeMin: now.toISOString(),
       timeMax: timeMax.toISOString(),
       singleEvents: true,
       orderBy: 'startTime',
-      q: telefono_paciente,
+      q: telBusqueda,
     });
 
     const events = response.data.items || [];
@@ -527,7 +531,7 @@ async function agendaDelDia({ fecha = null }, calendarId) {
       orderBy: 'startTime',
     });
 
-    const events = response.data.items || [];
+    const events = (response.data.items || []).filter(e => e.start?.dateTime);
     const citas = events.map(e => ({
       hora: formatHora(new Date(e.start.dateTime)),
       paciente: e.summary,
@@ -556,7 +560,7 @@ async function cancelarCitasDelDia({ fecha, motivo = 'inconveniente en la agenda
       singleEvents: true,
     });
 
-    const events = response.data.items || [];
+    const events = (response.data.items || []).filter(e => e.start?.dateTime);
     const pacientes = [];
 
     for (const event of events) {
