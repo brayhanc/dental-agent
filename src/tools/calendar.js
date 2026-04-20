@@ -100,10 +100,12 @@ async function verificarDisponibilidad({ fecha, duracion_minutos = 60 }, calenda
       orderBy: 'startTime',
     });
 
-    const busySlots = (response.data.items || []).map(e => ({
-      start: new Date(e.start.dateTime || e.start.date),
-      end: new Date(e.end.dateTime || e.end.date),
-    }));
+    const busySlots = (response.data.items || [])
+      .filter(e => e.start?.dateTime)
+      .map(e => ({
+        start: new Date(e.start.dateTime),
+        end: new Date(e.end.dateTime),
+      }));
 
     const slots = [];
     let checkDate = startBase;
@@ -178,14 +180,15 @@ async function crearCita({ datetime, tratamiento, nombre_paciente, telefono_paci
     const calendar = getCalendarClient();
     const end = new Date(start.getTime() + 60 * 60 * 1000);
 
-    // Verificar que el slot no esté ya ocupado
+    // Verificar que el slot no esté ya ocupado (solo eventos con hora, no all-day)
     const conflicto = await calendar.events.list({
       calendarId,
       timeMin: start.toISOString(),
       timeMax: end.toISOString(),
       singleEvents: true,
     });
-    if ((conflicto.data.items || []).length > 0) {
+    const conflictos = (conflicto.data.items || []).filter(e => e.start?.dateTime);
+    if (conflictos.length > 0) {
       return { success: false, error: 'Ese horario ya está ocupado. Usa verificar_disponibilidad para ver horarios libres.' };
     }
 
@@ -444,7 +447,7 @@ async function reagendarCita({ telefono_paciente, nuevo_datetime, clientId = 'de
       timeMax: newEnd.toISOString(),
       singleEvents: true,
     });
-    const conflictos = (conflicto.data.items || []).filter(e => e.id !== cita.id);
+    const conflictos = (conflicto.data.items || []).filter(e => e.start?.dateTime && e.id !== cita.id);
     if (conflictos.length > 0) {
       return { success: false, error: 'Ese horario ya está ocupado. Usa verificar_disponibilidad para ver horarios libres.' };
     }
