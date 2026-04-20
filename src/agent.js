@@ -7,8 +7,12 @@ const client = new Anthropic({ apiKey: config.anthropic.apiKey });
 
 function getColombiaTime() {
   const now = new Date();
-  const colombiaTime = new Date(now.getTime() - 5 * 60 * 60 * 1000);
-  return colombiaTime.toISOString().replace('T', ' ').substring(0, 16) + ' (hora Colombia UTC-5)';
+  const co = new Date(now.getTime() - 5 * 60 * 60 * 1000);
+  const dias = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+  const meses = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+  const hour = String(co.getUTCHours()).padStart(2, '0');
+  const minute = String(co.getUTCMinutes()).padStart(2, '0');
+  return `${dias[co.getUTCDay()]} ${co.getUTCDate()} de ${meses[co.getUTCMonth()]} de ${co.getUTCFullYear()}, ${hour}:${minute} (hora Colombia UTC-5)`;
 }
 
 const PATIENT_TOOLS = [
