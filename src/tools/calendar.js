@@ -541,7 +541,7 @@ async function agendaDelDia({ fecha = null }, calendarId) {
   }
 }
 
-async function cancelarCitasDelDia({ fecha, motivo = 'inconveniente en la agenda', clientId = 'default', phone = null, confirmed = false }, calendarId) {
+async function cancelarCitasDelDia({ fecha, motivo = 'inconveniente en la agenda' }, calendarId) {
   calendarId = calendarId || config.google.calendarId;
   try {
     const calendar = getCalendarClient();
@@ -557,22 +557,8 @@ async function cancelarCitasDelDia({ fecha, motivo = 'inconveniente en la agenda
     });
 
     const events = response.data.items || [];
-
-    if (!confirmed && phone) {
-      if (events.length === 0) return { success: false, error: `No hay citas el ${formatFecha(dayStart)}.` };
-      await memory.savePendingAction(clientId, phone, {
-        tool: 'cancelar_citas_del_dia',
-        params: { fecha, motivo, clientId, phone, confirmed: true },
-        descripcion: `cancelar ${events.length} cita(s) del ${formatFecha(dayStart)}`,
-      });
-      return {
-        requires_confirmation: true,
-        propuesta: `${events.length} cita(s) el ${formatFecha(dayStart)}`,
-        instruccion: `Confirma con el odontólogo: "¿Cancelo las ${events.length} citas del ${formatFecha(dayStart)}?"`,
-      };
-    }
-
     const pacientes = [];
+
     for (const event of events) {
       const telMatch = event.description?.match(/tel:(\d+)/);
       if (telMatch) {
