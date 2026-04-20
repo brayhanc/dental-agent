@@ -305,6 +305,9 @@ async function reprogramarCitaPaciente({ telefono_paciente, motivo = 'un ajuste 
       hora: formatHora(citaStart),
     };
 
+    // Cancelar la cita ANTES de verificar disponibilidad, para liberar ese slot (crítico cuando mismo_dia=true)
+    await calendar.events.delete({ calendarId, eventId: cita.id });
+
     // Obtener horarios disponibles según preferencia del odontólogo
     const citaCo = coTime(citaStart);
     const fechaBusqueda = mismo_dia ? `${citaCo.year}-${String(citaCo.month).padStart(2,'0')}-${String(citaCo.day).padStart(2,'0')}` : null;
@@ -323,9 +326,6 @@ async function reprogramarCitaPaciente({ telefono_paciente, motivo = 'un ajuste 
         return true;
       }).slice(0, 3);
     }
-
-    // Cancelar la cita actual
-    await calendar.events.delete({ calendarId, eventId: cita.id });
 
     // Guardar en lista de cancelados
     await memory.addCancelledPatient(clientId, {
@@ -437,6 +437,18 @@ async function reagendarCita({ telefono_paciente, nuevo_datetime, clientId = 'de
 
     const newEnd = new Date(newStart.getTime() + 60 * 60 * 1000);
 
+    // Verificar que el nuevo slot no esté ya ocupado (excluyendo la propia cita)
+    const conflicto = await calendar.events.list({
+      calendarId,
+      timeMin: newStart.toISOString(),
+      timeMax: newEnd.toISOString(),
+      singleEvents: true,
+    });
+    const conflictos = (conflicto.data.items || []).filter(e => e.id !== cita.id);
+    if (conflictos.length > 0) {
+      return { success: false, error: 'Ese horario ya está ocupado. Usa verificar_disponibilidad para ver horarios libres.' };
+    }
+
     await calendar.events.update({
       calendarId,
       eventId: cita.id,
@@ -526,7 +538,7 @@ async function agendaDelDia({ fecha = null }, calendarId) {
   }
 }
 
-async function cancelarCitasDelDia({ fecha, motivo = 'inconveniente en la agenda' }, calendarId) {
+async function cancelarCitasDelDia({ fecha, motivo = 'inconveniente en la agenda', clientId = 'default', phone = null, confirmed = false }, calendarId) {
   calendarId = calendarId || config.google.calendarId;
   try {
     const calendar = getCalendarClient();
@@ -542,8 +554,22 @@ async function cancelarCitasDelDia({ fecha, motivo = 'inconveniente en la agenda
     });
 
     const events = response.data.items || [];
-    const pacientes = [];
 
+    if (!confirmed && phone) {
+      if (events.length === 0) return { success: false, error: `No hay citas el ${formatFecha(dayStart)}.` };
+      await memory.savePendingAction(clientId, phone, {
+        tool: 'cancelar_citas_del_dia',
+        params: { fecha, motivo, clientId, phone, confirmed: true },
+        descripcion: `cancelar ${events.length} cita(s) del ${formatFecha(dayStart)}`,
+      });
+      return {
+        requires_confirmation: true,
+        propuesta: `${events.length} cita(s) el ${formatFecha(dayStart)}`,
+        instruccion: `Confirma con el odontólogo: "¿Cancelo las ${events.length} citas del ${formatFecha(dayStart)}?"`,
+      };
+    }
+
+    const pacientes = [];
     for (const event of events) {
       const telMatch = event.description?.match(/tel:(\d+)/);
       if (telMatch) {
@@ -558,6 +584,7 @@ async function cancelarCitasDelDia({ fecha, motivo = 'inconveniente en la agenda
 
     return {
       success: true,
+      message: `${events.length} cita(s) canceladas el ${formatFecha(dayStart)}`,
       canceladas: events.length,
       pacientes_a_notificar: pacientes,
       fecha: formatFecha(dayStart),

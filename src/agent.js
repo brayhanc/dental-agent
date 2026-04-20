@@ -154,7 +154,7 @@ async function executeTool(toolName, toolInput, calendarId, clientId = 'default'
     case 'agenda_del_dia':
       return await calendar.agendaDelDia(toolInput, calendarId);
     case 'cancelar_citas_del_dia':
-      return await calendar.cancelarCitasDelDia(toolInput, calendarId);
+      return await calendar.cancelarCitasDelDia({ ...toolInput, clientId, phone }, calendarId);
     case 'reprogramar_cita_paciente':
       return await calendar.reprogramarCitaPaciente({ ...toolInput, clientId }, calendarId);
     case 'optimizar_slot_libre':
